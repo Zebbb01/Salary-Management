@@ -6,6 +6,9 @@ import { createClient } from '@/lib/supabase/client';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { Header } from '@/components/layout/header';
 import { MobileNav } from '@/components/layout/mobile-nav';
+import { AnimatedBackground } from '@/components/ui/animated-background';
+import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
+import { OnboardingSpotlight } from '@/components/onboarding/onboarding-spotlight';
 
 export default function DashboardLayout({
   children,
@@ -51,15 +54,21 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <AppSidebar />
-      <div className="flex min-w-0 flex-1 flex-col lg:ml-64">
-        <Header />
-        <main className="flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
-          {children}
-        </main>
-        <MobileNav />
+    <OnboardingProvider>
+      <div className="flex min-h-screen bg-background">
+        <AnimatedBackground variant="dashboard" />
+        <div data-onboarding="sidebar">
+          <AppSidebar />
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col lg:ml-64">
+          <Header />
+          <main className="flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
+            {children}
+          </main>
+          <MobileNav />
+        </div>
       </div>
-    </div>
+      <OnboardingSpotlight />
+    </OnboardingProvider>
   );
 }

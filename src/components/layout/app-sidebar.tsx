@@ -61,6 +61,8 @@ export function AppSidebar() {
                   ? 'bg-sidebar-accent text-primary font-semibold'
                   : 'text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
               )}
+              {...(item.label === 'Payroll' ? { 'data-onboarding': 'calculator-link' } : {})}
+              {...(item.label === 'Settings' ? { 'data-onboarding': 'settings-link' } : {})}
             >
               <item.icon className="size-4 shrink-0" />
               {item.label}

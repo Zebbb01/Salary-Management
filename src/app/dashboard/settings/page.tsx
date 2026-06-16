@@ -439,7 +439,7 @@ export default function SettingsPage() {
               <Wallet className="h-3.5 w-3.5" />
               Salary
             </TabsTrigger>
-            <TabsTrigger value="budget" className="gap-1.5">
+            <TabsTrigger value="budget" className="gap-1.5" data-onboarding="budget-tab">
               <PieChart className="h-3.5 w-3.5" />
               Budget
             </TabsTrigger>
@@ -455,7 +455,7 @@ export default function SettingsPage() {
       {/* ============================================================ */}
       {/* Salary Configuration                                         */}
       {/* ============================================================ */}
-      <Card>
+      <Card data-onboarding="salary-config">
         <CardHeader>
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
@@ -539,7 +539,7 @@ export default function SettingsPage() {
       {/* ============================================================ */}
       {/* Budget Allocations (Amount-based)                             */}
       {/* ============================================================ */}
-      <Card>
+      <Card data-onboarding="budget-allocations">
         <CardHeader>
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">

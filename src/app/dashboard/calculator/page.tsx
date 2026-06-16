@@ -1248,7 +1248,7 @@ export default function CalculatorPage() {
               </motion.div>
 
               {/* ----- Save Button ----- */}
-              <motion.div variants={fadeIn}>
+              <motion.div variants={fadeIn} data-onboarding="calculator-save">
                 <Button
                   type="submit"
                   variant="default"

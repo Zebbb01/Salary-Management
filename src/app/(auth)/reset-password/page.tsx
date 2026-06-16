@@ -1,22 +1,29 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Eye, EyeOff, Mail, Lock, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff, Lock, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
-import {
-  signupSchema,
-  type SignupFormData,
-} from '@/features/salary/validations/schemas';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+
+const resetPasswordSchema = z
+  .object({
+    password: z.string().min(6, 'Password must be at least 6 characters'),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: 'Passwords do not match',
+    path: ['confirmPassword'],
+  });
+
+type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -35,99 +42,46 @@ const itemVariants = {
   },
 } as const;
 
-function getPasswordStrength(password: string): {
-  score: number;
-  label: string;
-  color: string;
-} {
-  let score = 0;
-  if (password.length >= 8) score++;
-  if (password.length >= 12) score++;
-  if (/[A-Z]/.test(password)) score++;
-  if (/[a-z]/.test(password)) score++;
-  if (/[0-9]/.test(password)) score++;
-  if (/[^A-Za-z0-9]/.test(password)) score++;
-
-  if (score <= 1) return { score, label: 'Weak', color: 'bg-red-500' };
-  if (score <= 2) return { score, label: 'Fair', color: 'bg-amber-500' };
-  if (score <= 3) return { score, label: 'Good', color: 'bg-yellow-500' };
-  if (score <= 4) return { score, label: 'Strong', color: 'bg-emerald-500' };
-  return { score, label: 'Very strong', color: 'bg-emerald-400' };
-}
-
-export default function SignupPage() {
+export default function ResetPasswordPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
 
   const {
     register,
     handleSubmit,
-    watch,
     formState: { errors, isSubmitting },
-  } = useForm<SignupFormData>({
-    resolver: zodResolver(signupSchema),
+  } = useForm<ResetPasswordFormData>({
+    resolver: zodResolver(resetPasswordSchema),
     defaultValues: {
-      email: '',
       password: '',
       confirmPassword: '',
     },
   });
 
-  const passwordValue = watch('password');
-  const strength = useMemo(
-    () => getPasswordStrength(passwordValue || ''),
-    [passwordValue]
-  );
-
-  async function onSubmit(data: SignupFormData) {
+  async function onSubmit(data: ResetPasswordFormData) {
     const supabase = createClient();
 
-    const { data: signUpData, error } = await supabase.auth.signUp({
-      email: data.email,
+    const { error } = await supabase.auth.updateUser({
       password: data.password,
     });
 
     if (error) {
-      let message = '';
-      if (error.message && error.message.trim().length > 0) {
-        message = error.message;
-      } else if (error.status === 500) {
-        message =
-          'The email service is temporarily unavailable. Please try again in a few minutes or contact support.';
-      } else {
-        message =
-          'Something went wrong. Please try again in a few minutes.';
-      }
-      toast.error('Signup failed', {
-        description: message,
+      toast.error('Failed to reset password', {
+        description: error.message,
       });
       return;
     }
 
-    // Supabase returns a user with empty identities when the email already exists
-    // (it doesn't return an error for security/privacy reasons)
-    if (
-      signUpData?.user &&
-      signUpData.user.identities &&
-      signUpData.user.identities.length === 0
-    ) {
-      toast.error('Account already exists', {
-        description:
-          'An account with this email already exists. Please sign in instead.',
-      });
-      return;
-    }
+    setIsComplete(true);
+    toast.success('Password updated successfully!');
 
-    setIsSuccess(true);
-    toast.success('Account created!', {
-      description: 'Redirecting to your dashboard...',
-    });
-
+    // Redirect to dashboard after a short delay
     setTimeout(() => {
       router.push('/dashboard');
-    }, 1500);
+      router.refresh();
+    }, 2000);
   }
 
   return (
@@ -145,9 +99,9 @@ export default function SignupPage() {
         <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-emerald-500/[0.03] to-transparent" />
 
         <AnimatePresence mode="wait">
-          {isSuccess ? (
+          {isComplete ? (
             <motion.div
-              key="success"
+              key="complete"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -157,36 +111,41 @@ export default function SignupPage() {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                transition={{ delay: 0.2, type: 'spring', stiffness: 200, damping: 15 }}
+                transition={{
+                  delay: 0.2,
+                  type: 'spring',
+                  stiffness: 200,
+                  damping: 15,
+                }}
                 className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 ring-1 ring-emerald-500/20"
               >
                 <CheckCircle2 className="h-8 w-8 text-emerald-500" />
               </motion.div>
               <h2 className="text-xl font-bold text-foreground">
-                Account Created
+                Password Updated
               </h2>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Your account has been set up successfully.
-                <br />
-                Setting up your dashboard...
+              <p className="mt-2 text-sm text-muted-foreground">
+                Your password has been updated successfully.
               </p>
-              <p className="mt-4 text-xs text-muted-foreground/60">
-                Redirecting to dashboard...
-              </p>
+              <div className="mt-4 rounded-xl border border-emerald-500/10 bg-emerald-500/5 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Redirecting you to the dashboard...
+                </p>
+              </div>
             </motion.div>
           ) : (
             <motion.div key="form">
-              <div className="relative px-6 pt-8 pb-2 sm:px-8">
+              <div className="relative px-6 pt-8 pb-6 sm:px-8">
                 {/* Header */}
                 <motion.div
                   variants={itemVariants}
                   className="mb-6 text-center"
                 >
                   <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                    Create Account
+                    Choose New Password
                   </h1>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    Start managing your salary and budget
+                    Enter your new password below
                   </p>
                 </motion.div>
 
@@ -195,39 +154,16 @@ export default function SignupPage() {
                   onSubmit={handleSubmit(onSubmit)}
                   className="space-y-4"
                 >
-                  {/* Email */}
+                  {/* New Password */}
                   <motion.div variants={itemVariants} className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <div className="relative">
-                      <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-                      <Input
-                        id="email"
-                        type="email"
-                        autoComplete="email"
-                        placeholder="you@example.com"
-                        disabled={isSubmitting}
-                        aria-invalid={!!errors.email}
-                        className="h-10 pl-9"
-                        {...register('email')}
-                      />
-                    </div>
-                    {errors.email && (
-                      <p className="text-xs text-destructive">
-                        {errors.email.message}
-                      </p>
-                    )}
-                  </motion.div>
-
-                  {/* Password */}
-                  <motion.div variants={itemVariants} className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
+                    <Label htmlFor="password">New Password</Label>
                     <div className="relative">
                       <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
                       <Input
                         id="password"
                         type={showPassword ? 'text' : 'password'}
                         autoComplete="new-password"
-                        placeholder="At least 6 characters"
+                        placeholder="Enter new password"
                         disabled={isSubmitting}
                         aria-invalid={!!errors.password}
                         className="h-10 pr-10 pl-9"
@@ -256,45 +192,20 @@ export default function SignupPage() {
                         {errors.password.message}
                       </p>
                     )}
-
-                    {/* Password strength indicator */}
-                    {passwordValue && passwordValue.length > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="space-y-1.5"
-                      >
-                        <div className="flex gap-1">
-                          {[1, 2, 3, 4, 5].map((level) => (
-                            <div
-                              key={level}
-                              className={cn(
-                                'h-1 flex-1 rounded-full transition-all duration-300',
-                                level <= strength.score
-                                  ? strength.color
-                                  : 'bg-foreground/10'
-                              )}
-                            />
-                          ))}
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          Password strength:{' '}
-                          <span className="font-medium">{strength.label}</span>
-                        </p>
-                      </motion.div>
-                    )}
                   </motion.div>
 
                   {/* Confirm Password */}
                   <motion.div variants={itemVariants} className="space-y-2">
-                    <Label htmlFor="confirmPassword">Confirm Password</Label>
+                    <Label htmlFor="confirmPassword">
+                      Confirm New Password
+                    </Label>
                     <div className="relative">
                       <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
                       <Input
                         id="confirmPassword"
                         type={showConfirm ? 'text' : 'password'}
                         autoComplete="new-password"
-                        placeholder="Re-enter your password"
+                        placeholder="Confirm new password"
                         disabled={isSubmitting}
                         aria-invalid={!!errors.confirmPassword}
                         className="h-10 pr-10 pl-9"
@@ -332,7 +243,7 @@ export default function SignupPage() {
                   >
                     <div className="h-px flex-1 bg-gradient-to-r from-transparent via-foreground/10 to-transparent" />
                     <span className="text-[11px] font-medium tracking-wide text-muted-foreground/50 uppercase">
-                      Secure signup
+                      Secure reset
                     </span>
                     <div className="h-px flex-1 bg-gradient-to-r from-transparent via-foreground/10 to-transparent" />
                   </motion.div>
@@ -350,7 +261,7 @@ export default function SignupPage() {
                         <Loader2 className="h-5 w-5 animate-spin" />
                       ) : (
                         <>
-                          Create Account
+                          Update Password
                           <ArrowRight className="ml-1.5 h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                         </>
                       )}
@@ -358,22 +269,6 @@ export default function SignupPage() {
                   </motion.div>
                 </form>
               </div>
-
-              {/* Footer */}
-              <motion.div
-                variants={itemVariants}
-                className="mt-4 flex items-center justify-center gap-1.5 border-t border-foreground/[0.05] bg-muted/30 px-6 py-4"
-              >
-                <p className="text-sm text-muted-foreground">
-                  Already have an account?
-                </p>
-                <Link
-                  href="/login"
-                  className="text-sm font-medium text-primary transition-colors hover:text-primary/80"
-                >
-                  Sign in
-                </Link>
-              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>

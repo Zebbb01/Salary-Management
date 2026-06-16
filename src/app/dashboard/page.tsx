@@ -45,6 +45,7 @@ import {
   getPayPeriodTrend,
   getLatestPeriodInRange,
   getAllocationTypes,
+  getPayPeriods,
 } from '@/features/salary/services/salary.service';
 import type {
   SalaryConfig,
@@ -617,13 +618,22 @@ export default function DashboardPage() {
       const trend = await getPayPeriodTrend(6, dateOpts);
       setTrendData(trend);
 
-      // Init and fetch monthly bills for the selected bill month
-      if (user && computed.length > 0) {
+      // Init and fetch monthly bills - always for the CURRENT month
+      // Bills are a to-do checklist, not historical data, so they
+      // should not change when the date filter changes.
+      // Only init bills if the user has saved at least one pay period
+      // (prevents new users from seeing bills before they've used the app).
+      const currentMonth = (() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      })();
+      const hasAnyPeriods = await getPayPeriods(1);
+      if (user && computed.length > 0 && hasAnyPeriods.length > 0) {
         const allocationsWithIds = computed.map((a) => ({
           id: a.id,
           amount: a.amount,
         }));
-        const bills = await initMonthlyBills(user.id, billMonth, allocationsWithIds);
+        const bills = await initMonthlyBills(user.id, currentMonth, allocationsWithIds);
         setBillPayments(bills);
       }
     } catch (err) {
@@ -640,8 +650,11 @@ export default function DashboardPage() {
 
 
 
-  // Derive the bill month from the active filter
-  const activeBillMonth = getDateRange(dateFilter).billMonth;
+  // Bills always use the current month (not the date filter)
+  const activeBillMonth = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  })();
 
   // Handle marking a bill as paid
   async function handleMarkBillPaid(bill: BillPayment) {
@@ -772,7 +785,7 @@ export default function DashboardPage() {
       className="flex flex-col gap-6"
     >
       {/* Date Filter Bar */}
-      <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div data-onboarding="date-filter" className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         <motion.div
           variants={staggerItem}
           className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none"
@@ -799,9 +812,9 @@ export default function DashboardPage() {
         </motion.div>
       </div>
 
-      {/* Unpaid Bills Alert Banner */}
+      {/* Unpaid Bills Alert Banner - only show on This Month and when user has at least one pay period */}
       <AnimatePresence>
-        {unpaidBills.length > 0 && (
+        {dateFilter === 'this-month' && unpaidBills.length > 0 && latestPeriod && (
           <motion.div
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1100,10 +1113,11 @@ export default function DashboardPage() {
         </Card>
       </motion.div>
 
-      {/* Two Column Layout */}
+      {/* Two Column Layout - only show when there's data for the selected period */}
+      {latestPeriod ? (
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Budget Donut Chart */}
-        <motion.div variants={staggerItem}>
+        <motion.div variants={staggerItem} data-onboarding="budget-chart">
           <Card className="h-full">
             <CardHeader>
               <CardTitle>Budget Allocation</CardTitle>
@@ -1239,10 +1253,35 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
       </div>
+      ) : (
+        <motion.div variants={staggerItem}>
+          <Card>
+            <CardContent className="py-12">
+              <div className="flex flex-col items-center justify-center text-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <BarChart3 className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">No payroll data for this period</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Budget allocation and categories will appear once you save a pay period in this date range.
+                  </p>
+                </div>
+                <Link href="/dashboard/calculator">
+                  <Button variant="outline" size="sm" className="mt-2">
+                    <Briefcase className="h-3.5 w-3.5 mr-1.5" />
+                    Go to Calculator
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Monthly Bills Checklist */}
-      {billPayments.length > 0 && (
-        <motion.div variants={staggerItem}>
+      <motion.div variants={staggerItem} data-onboarding="monthly-bills">
+        {billPayments.length > 0 ? (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -1369,8 +1408,30 @@ export default function DashboardPage() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
-      )}
+        ) : (
+          <Card>
+            <CardContent className="py-12">
+              <div className="flex flex-col items-center justify-center text-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <Receipt className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">No bills set up yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Add budget allocations in Settings to start tracking your monthly bills.
+                  </p>
+                </div>
+                <Link href="/dashboard/settings">
+                  <Button variant="outline" size="sm" className="mt-2">
+                    <Settings className="h-3.5 w-3.5 mr-1.5" />
+                    Go to Settings
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </motion.div>
     </motion.div>
   );
 }
