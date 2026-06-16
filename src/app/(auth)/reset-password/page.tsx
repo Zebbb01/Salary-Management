@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -15,7 +15,12 @@ import { Button } from '@/components/ui/button';
 
 const resetPasswordSchema = z
   .object({
-    password: z.string().min(6, 'Password must be at least 6 characters'),
+    password: z
+      .string()
+      .min(8, 'Password must be at least 8 characters')
+      .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+      .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
+      .regex(/[0-9]/, 'Password must contain at least one number'),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -42,11 +47,46 @@ const itemVariants = {
   },
 } as const;
 
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionError, setSessionError] = useState(false);
+
+  // Exchange the code from the email link for an auth session
+  useEffect(() => {
+    async function exchangeCode() {
+      const supabase = createClient();
+      const code = searchParams.get('code');
+
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          toast.error('Failed to verify reset link', {
+            description: 'The link may have expired. Please request a new password reset.',
+          });
+          setSessionError(true);
+          return;
+        }
+      }
+
+      // Check if there's already a session (e.g. from hash fragment flow)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setSessionReady(true);
+      } else if (!code) {
+        toast.error('Auth session missing!', {
+          description: 'Please use the reset link from your email.',
+        });
+        setSessionError(true);
+      }
+    }
+
+    exchangeCode();
+  }, [searchParams]);
 
   const {
     register,
@@ -82,6 +122,47 @@ export default function ResetPasswordPage() {
       router.push('/dashboard');
       router.refresh();
     }, 2000);
+  }
+
+  // Show error state
+  if (sessionError) {
+    return (
+      <motion.div variants={containerVariants} initial="hidden" animate="visible">
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.08] bg-card/80 shadow-xl shadow-black/5 backdrop-blur-xl">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-red-500/50 to-transparent" />
+          <div className="px-6 py-12 text-center sm:px-8">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 ring-1 ring-red-500/20">
+              <Lock className="h-8 w-8 text-red-500" />
+            </div>
+            <h2 className="text-xl font-bold text-foreground">Reset Link Invalid</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This reset link has expired or is invalid. Please request a new one.
+            </p>
+            <Button
+              className="mt-6"
+              onClick={() => router.push('/forgot-password')}
+            >
+              Request New Link
+            </Button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Show loading while exchanging code
+  if (!sessionReady && !isComplete) {
+    return (
+      <motion.div variants={containerVariants} initial="hidden" animate="visible">
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.08] bg-card/80 shadow-xl shadow-black/5 backdrop-blur-xl">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
+          <div className="px-6 py-12 text-center sm:px-8">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+            <p className="mt-4 text-sm text-muted-foreground">Verifying reset link...</p>
+          </div>
+        </div>
+      </motion.div>
+    );
   }
 
   return (
@@ -274,5 +355,23 @@ export default function ResetPasswordPage() {
         </AnimatePresence>
       </div>
     </motion.div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.08] bg-card/80 shadow-xl shadow-black/5 backdrop-blur-xl">
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
+          <div className="px-6 py-12 text-center sm:px-8">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+            <p className="mt-4 text-sm text-muted-foreground">Loading...</p>
+          </div>
+        </div>
+      }
+    >
+      <ResetPasswordContent />
+    </Suspense>
   );
 }
