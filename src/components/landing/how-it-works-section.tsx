@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Settings, LayoutDashboard, TrendingUp, Check, ChevronRight } from 'lucide-react';
+import Image from 'next/image';
 
 const steps = [
   {
@@ -16,7 +17,9 @@ const steps = [
     gradientFrom: 'from-emerald-500',
     gradientTo: 'to-teal-400',
     ringColor: 'ring-emerald-500/20',
+    accentGlow: 'rgba(16, 185, 129, 0.15)',
     items: ['Salary configuration', 'Tax deductions', 'Pay period setup'],
+    image: '/images/landing/step-salary-setup.webp',
   },
   {
     number: '02',
@@ -30,7 +33,9 @@ const steps = [
     gradientFrom: 'from-blue-500',
     gradientTo: 'to-indigo-400',
     ringColor: 'ring-blue-500/20',
+    accentGlow: 'rgba(59, 130, 246, 0.15)',
     items: ['Category budgets', 'Expense tracking', 'Asset classification'],
+    image: '/images/landing/step-budget-allocate.webp',
   },
   {
     number: '03',
@@ -44,7 +49,9 @@ const steps = [
     gradientFrom: 'from-violet-500',
     gradientTo: 'to-purple-400',
     ringColor: 'ring-violet-500/20',
+    accentGlow: 'rgba(139, 92, 246, 0.15)',
     items: ['Bill monitoring', 'Spare tracking', 'Historical trends'],
+    image: '/images/landing/step-track-save.webp',
   },
 ];
 
@@ -54,7 +61,6 @@ const steps = [
 function TimelineConnector() {
   return (
     <div className="hidden lg:block absolute top-[52px] left-[calc(16.66%+52px)] right-[calc(16.66%+52px)] z-0" aria-hidden="true">
-      {/* Main line */}
       <motion.div
         className="h-[2px] w-full rounded-full"
         style={{
@@ -66,8 +72,6 @@ function TimelineConnector() {
         viewport={{ once: true }}
         transition={{ duration: 1.2, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
       />
-
-      {/* Animated dot traveling along the line */}
       <motion.div
         className="absolute top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-primary shadow-lg shadow-primary/50"
         initial={{ left: '0%' }}
@@ -107,7 +111,7 @@ function MobileConnector() {
 }
 
 /* ------------------------------------------------
-   Step Card
+   Step Card with illustration
    ------------------------------------------------ */
 function StepCard({ step, index }: { step: (typeof steps)[0]; index: number }) {
   return (
@@ -118,69 +122,79 @@ function StepCard({ step, index }: { step: (typeof steps)[0]; index: number }) {
       transition={{ duration: 0.6, delay: index * 0.2, ease: [0.16, 1, 0.3, 1] }}
       className="relative group"
     >
-      <div className={`relative rounded-2xl border border-border/40 bg-card/40 backdrop-blur-sm p-6 transition-all duration-300 hover:border-primary/20 hover:bg-card/60 overflow-hidden`}>
+      <div className={`relative rounded-2xl border border-border/40 bg-card/40 backdrop-blur-sm overflow-hidden transition-all duration-300 hover:border-primary/20 hover:bg-card/60`}>
         {/* Subtle gradient bg on hover */}
         <div
           className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
           style={{
-            background: `radial-gradient(ellipse at top left, ${
-              step.color.includes('emerald') ? 'rgba(16, 185, 129, 0.05)' :
-              step.color.includes('blue') ? 'rgba(59, 130, 246, 0.05)' :
-              'rgba(139, 92, 246, 0.05)'
-            }, transparent 60%)`,
+            background: `radial-gradient(ellipse at top left, ${step.accentGlow}, transparent 60%)`,
           }}
         />
 
         <div className="relative">
-          {/* Number + Icon row */}
-          <div className="flex items-center gap-4 mb-5">
-            {/* Number badge */}
-            <div className={`relative flex h-14 w-14 items-center justify-center rounded-2xl ${step.bg} border ${step.border}`}>
-              <step.icon className={`h-7 w-7 ${step.color}`} />
+          {/* Illustration image */}
+          <div className="relative w-full aspect-[16/10] overflow-hidden">
+            <Image
+              src={step.image}
+              alt={step.title}
+              fill
+              className="object-cover transition-transform duration-500 group-hover:scale-105"
+              sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
+            />
 
-              {/* Floating number */}
-              <motion.span
-                className={`absolute -top-2.5 -right-2.5 flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold text-white bg-gradient-to-br ${step.gradientFrom} ${step.gradientTo} shadow-lg`}
-                whileHover={{ scale: 1.1, rotate: 5 }}
-              >
-                {step.number}
-              </motion.span>
+            {/* Bottom gradient fade into card */}
+            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-card/95 via-card/50 to-transparent" />
+
+            {/* Step number badge */}
+            <motion.span
+              className={`absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white bg-gradient-to-br ${step.gradientFrom} ${step.gradientTo} shadow-lg backdrop-blur-sm`}
+              whileHover={{ scale: 1.1, rotate: 5 }}
+            >
+              {step.number}
+            </motion.span>
+
+            {/* Icon badge */}
+            <div className={`absolute bottom-3 left-5 flex h-11 w-11 items-center justify-center rounded-xl ${step.bg} border ${step.border} backdrop-blur-md`}>
+              <step.icon className={`h-5 w-5 ${step.color}`} />
             </div>
-
-            {/* Arrow for non-last (desktop only) */}
-            {index < steps.length - 1 && (
-              <motion.div
-                className="hidden lg:flex items-center text-muted-foreground/20 absolute -right-8 top-10"
-                animate={{ x: [0, 4, 0] }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-              >
-                <ChevronRight className="w-5 h-5" />
-              </motion.div>
-            )}
           </div>
 
-          <h3 className="text-lg font-semibold mb-2">{step.title}</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-            {step.description}
-          </p>
+          {/* Text content */}
+          <div className="px-5 pb-5 pt-2">
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-lg font-semibold">{step.title}</h3>
+              {index < steps.length - 1 && (
+                <motion.div
+                  className="hidden lg:flex items-center text-muted-foreground/20 absolute -right-5 top-1/2"
+                  animate={{ x: [0, 4, 0] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </motion.div>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+              {step.description}
+            </p>
 
-          {/* Mini checklist */}
-          <div className="space-y-2">
-            {step.items.map((item, i) => (
-              <motion.div
-                key={item}
-                initial={{ opacity: 0, x: -10 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.4, delay: 0.5 + index * 0.2 + i * 0.1 }}
-                className="flex items-center gap-2 text-xs text-muted-foreground/70"
-              >
-                <div className={`flex h-4 w-4 items-center justify-center rounded-full ${step.bg}`}>
-                  <Check className={`h-2.5 w-2.5 ${step.color}`} />
-                </div>
-                {item}
-              </motion.div>
-            ))}
+            {/* Mini checklist */}
+            <div className="space-y-2">
+              {step.items.map((item, i) => (
+                <motion.div
+                  key={item}
+                  initial={{ opacity: 0, x: -10 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 0.4, delay: 0.5 + index * 0.2 + i * 0.1 }}
+                  className="flex items-center gap-2 text-xs text-muted-foreground/70"
+                >
+                  <div className={`flex h-4 w-4 items-center justify-center rounded-full ${step.bg}`}>
+                    <Check className={`h-2.5 w-2.5 ${step.color}`} />
+                  </div>
+                  {item}
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -193,7 +207,7 @@ function StepCard({ step, index }: { step: (typeof steps)[0]; index: number }) {
    ------------------------------------------------ */
 export function HowItWorksSection() {
   return (
-    <section className="relative py-24 sm:py-32 overflow-hidden">
+    <section id="how-it-works" className="relative py-24 sm:py-32 overflow-hidden">
       {/* Decorative background shapes */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
         <motion.div

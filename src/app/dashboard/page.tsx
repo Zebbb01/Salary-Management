@@ -64,7 +64,7 @@ import { cn } from '@/lib/utils';
 import { CategoryIcon } from '@/components/ui/category-icon';
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
@@ -420,10 +420,10 @@ function EmptyState() {
               dashboard overview and budget breakdown.
             </p>
           </div>
-          <Button size="lg" render={<Link href="/dashboard/settings" />}>
+          <Link href="/dashboard/settings" className={cn(buttonVariants({ size: "lg" }), "gap-1.5")}>
             <Settings className="h-4 w-4" />
             Go to Settings
-          </Button>
+          </Link>
         </CardContent>
       </Card>
     </motion.div>
