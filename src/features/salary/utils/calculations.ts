@@ -139,14 +139,20 @@ export function validateAllocationsSum(allocations: BudgetAllocation[]): {
 }
 
 /**
- * Generate a default period label based on current date
- * Format: "June 2026 - First Wage (June 4, 2026)" or "June 2026 - Second Wage (June 16, 2026)"
+ * Generate a default period label based on current date and pay frequency
+ * Format varies by frequency:
+ * - semi-monthly: "June 2026 - First Wage (June 4, 2026)"
+ * - monthly: "June 2026 - Monthly Pay (June 4, 2026)"
+ * - bi-weekly: "June 2026 - Pay Period (June 4, 2026)"
+ * - weekly: "June 2026 - Week 3 (June 4, 2026)"
  */
-export function generatePeriodLabel(date: Date = new Date()): string {
+export function generatePeriodLabel(
+  date: Date = new Date(),
+  frequency: 'weekly' | 'bi-weekly' | 'semi-monthly' | 'monthly' = 'semi-monthly'
+): string {
   const month = date.toLocaleString('en-US', { month: 'long' });
   const year = date.getFullYear();
   const day = date.getDate();
-  const wage = day <= 15 ? 'First Wage' : 'Second Wage';
 
   const formattedDate = date.toLocaleString('en-US', {
     month: 'long',
@@ -154,7 +160,26 @@ export function generatePeriodLabel(date: Date = new Date()): string {
     year: 'numeric',
   });
 
-  return `${month} ${year} - ${wage} (${formattedDate})`;
+  let periodType: string;
+  switch (frequency) {
+    case 'monthly':
+      periodType = 'Monthly Pay';
+      break;
+    case 'bi-weekly':
+      periodType = 'Pay Period';
+      break;
+    case 'weekly': {
+      const weekNum = Math.ceil(day / 7);
+      periodType = `Week ${weekNum}`;
+      break;
+    }
+    case 'semi-monthly':
+    default:
+      periodType = day <= 15 ? 'First Wage' : 'Second Wage';
+      break;
+  }
+
+  return `${month} ${year} - ${periodType} (${formattedDate})`;
 }
 
 /**

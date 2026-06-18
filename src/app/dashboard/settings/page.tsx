@@ -28,6 +28,7 @@ import type {
   BudgetAllocation,
   AllocationType,
   AllocationClassification,
+  PayFrequency,
 } from '@/features/salary/types/salary.types';
 import {
   getSalaryConfig,
@@ -63,6 +64,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 // Modern Premium Color Palette for Categories
 const PALETTE_COLORS = [
@@ -75,6 +77,13 @@ const PALETTE_COLORS = [
   { name: 'Indigo', value: 'hsl(240, 80%, 60%)' },
   { name: 'Orange', value: 'hsl(20, 90%, 55%)' },
   { name: 'Gray', value: 'hsl(220, 15%, 50%)' },
+];
+
+const PAY_FREQUENCY_OPTIONS: { value: PayFrequency; label: string; description: string }[] = [
+  { value: 'semi-monthly', label: 'Semi-Monthly', description: 'Paid twice per month (1st & 2nd wage)' },
+  { value: 'monthly', label: 'Monthly', description: 'Paid once per month' },
+  { value: 'bi-weekly', label: 'Bi-Weekly', description: 'Paid every two weeks' },
+  { value: 'weekly', label: 'Weekly', description: 'Paid every week' },
 ];
 
 // Helper to assign a sequential color when adding a new category
@@ -104,6 +113,7 @@ export default function SettingsPage() {
   const [name, setName] = useState('');
   const [salary, setSalary] = useState(0);
   const [partTimeSalary, setPartTimeSalary] = useState(0);
+  const [payFrequency, setPayFrequency] = useState<PayFrequency>('semi-monthly');
 
   // Form fields - allocations (amounts, category names, descriptions, colors, icons)
   const [allocationAmounts, setAllocationAmounts] = useState<
@@ -120,6 +130,9 @@ export default function SettingsPage() {
   >({});
   const [allocationIcons, setAllocationIcons] = useState<
     Record<string, string>
+  >({});
+  const [allocationFixedStates, setAllocationFixedStates] = useState<
+    Record<string, boolean>
   >({});
 
   // Active pickers states
@@ -161,6 +174,7 @@ export default function SettingsPage() {
         setName(salaryConfig.name);
         setSalary(salaryConfig.full_time_salary);
         setPartTimeSalary(salaryConfig.part_time_salary ?? 0);
+        setPayFrequency(salaryConfig.pay_frequency ?? 'semi-monthly');
 
         const allocs = await getBudgetAllocations(salaryConfig.id);
         setAllocations(allocs);
@@ -172,6 +186,7 @@ export default function SettingsPage() {
         const colorMap: Record<string, string> = {};
         const iconMap: Record<string, string> = {};
         const typeIdMap: Record<string, string> = {};
+        const fixedMap: Record<string, boolean> = {};
 
         for (const a of allocs) {
           amountMap[a.id] = Math.round(a.percentage * combinedSalary * 100) / 100;
@@ -179,6 +194,7 @@ export default function SettingsPage() {
           descMap[a.id] = a.description ?? '';
           colorMap[a.id] = a.color ?? 'hsl(220, 15%, 50%)';
           iconMap[a.id] = a.icon_name ?? 'HelpCircle';
+          fixedMap[a.id] = a.is_fixed ?? false;
           if (a.allocation_type_id) typeIdMap[a.id] = a.allocation_type_id;
         }
         setAllocationAmounts(amountMap);
@@ -187,6 +203,7 @@ export default function SettingsPage() {
         setAllocationColors(colorMap);
         setAllocationIcons(iconMap);
         setAllocationTypeIds(typeIdMap);
+        setAllocationFixedStates(fixedMap);
       }
 
       // Load or seed allocation types
@@ -218,6 +235,7 @@ export default function SettingsPage() {
         name,
         full_time_salary: salary,
         part_time_salary: partTimeSalary,
+        pay_frequency: payFrequency,
       });
       setConfig(updated);
       toast.success('Salary configuration saved.');
@@ -248,6 +266,7 @@ export default function SettingsPage() {
         color: allocationColors[a.id] ?? a.color ?? 'hsl(220, 15%, 50%)',
         icon_name: allocationIcons[a.id] ?? a.icon_name ?? 'HelpCircle',
         allocation_type_id: allocationTypeIds[a.id] || a.allocation_type_id || null,
+        is_fixed: allocationFixedStates[a.id] ?? false,
       }));
       await updateMultipleAllocations(updates);
 
@@ -260,6 +279,7 @@ export default function SettingsPage() {
           color: allocationColors[a.id] ?? a.color,
           icon_name: allocationIcons[a.id] ?? a.icon_name,
           allocation_type_id: allocationTypeIds[a.id] ?? a.allocation_type_id,
+          is_fixed: allocationFixedStates[a.id] ?? false,
         }))
       );
 
@@ -289,6 +309,7 @@ export default function SettingsPage() {
         description: '',
         color: assignedColor,
         icon_name: assignedIcon,
+        is_fixed: false,
       });
 
       setAllocations((prev) => [...prev, newAlloc]);
@@ -311,6 +332,10 @@ export default function SettingsPage() {
       setAllocationIcons((prev) => ({
         ...prev,
         [newAlloc.id]: assignedIcon,
+      }));
+      setAllocationFixedStates((prev) => ({
+        ...prev,
+        [newAlloc.id]: false,
       }));
 
       toast.success('Category added.');
@@ -434,17 +459,17 @@ export default function SettingsPage() {
 
       <Tabs defaultValue="salary" className="w-full">
         <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="salary" className="gap-1.5">
-              <Wallet className="h-3.5 w-3.5" />
+          <TabsList className="grid w-full grid-cols-3 h-auto p-1 sm:h-11">
+            <TabsTrigger value="salary" className="h-9 gap-2 px-4 text-sm">
+              <Wallet className="h-4 w-4" />
               Salary
             </TabsTrigger>
-            <TabsTrigger value="budget" className="gap-1.5" data-onboarding="budget-tab">
-              <PieChart className="h-3.5 w-3.5" />
+            <TabsTrigger value="budget" className="h-9 gap-2 px-4 text-sm" data-onboarding="budget-tab">
+              <PieChart className="h-4 w-4" />
               Budget
             </TabsTrigger>
-            <TabsTrigger value="general" className="gap-1.5">
-              <Settings className="h-3.5 w-3.5" />
+            <TabsTrigger value="general" className="h-9 gap-2 px-4 text-sm">
+              <Settings className="h-4 w-4" />
               General
             </TabsTrigger>
           </TabsList>
@@ -499,6 +524,22 @@ export default function SettingsPage() {
               onChange={(e) => setPartTimeSalary(Number(e.target.value) || 0)}
               className="tabular-nums"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="pay-frequency" className="font-semibold">Pay Frequency</Label>
+            <select
+              id="pay-frequency"
+              value={payFrequency}
+              onChange={(e) => setPayFrequency(e.target.value as PayFrequency)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary/50 cursor-pointer"
+            >
+              {PAY_FREQUENCY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label} — {opt.description}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Combined total display */}
@@ -712,19 +753,27 @@ export default function SettingsPage() {
                         className="text-sm font-medium h-8"
                       />
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDeleteCategory(alloc.id)}
+                    <ConfirmDialog
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={deletingIds.has(alloc.id)}
+                          className="shrink-0 h-8 w-8 text-muted-foreground hover:text-destructive"
+                        >
+                          {deletingIds.has(alloc.id) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      }
+                      title="Delete Budget Category"
+                      description={`Are you sure you want to delete the "${alloc.category}" budget category? This action cannot be undone.`}
+                      confirmLabel="Delete Category"
+                      onConfirm={() => handleDeleteCategory(alloc.id)}
                       disabled={deletingIds.has(alloc.id)}
-                      className="shrink-0 h-8 w-8 text-muted-foreground hover:text-destructive"
-                    >
-                      {deletingIds.has(alloc.id) ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
+                    />
                   </div>
 
                   {/* Bottom row: description + amount */}
@@ -766,11 +815,12 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Type selector row */}
-                  {allocationTypes.length > 0 && (
-                    <div className="flex items-center gap-2">
-                      <Tag className="h-3 w-3 text-muted-foreground/60 shrink-0" />
-                      <select
+                  {/* Type selector & Fixed checkbox row */}
+                  <div className="flex items-center justify-between gap-4 mt-1">
+                    {allocationTypes.length > 0 ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <Tag className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                        <select
                           value={allocationTypeIds[alloc.id] ?? ''}
                           onChange={(e) =>
                             setAllocationTypeIds((prev) => ({
@@ -787,25 +837,50 @@ export default function SettingsPage() {
                             </option>
                           ))}
                         </select>
-                      {(() => {
-                        const selectedType = allocationTypes.find((t) => t.id === allocationTypeIds[alloc.id]);
-                        if (!selectedType) return null;
-                        return (
-                          <Badge
-                            variant="secondary"
-                            className={cn(
-                              'text-[10px] px-1.5 py-0 shrink-0',
-                              selectedType.classification === 'asset'
-                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                                : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                            )}
-                          >
-                            {selectedType.classification === 'asset' ? 'Asset' : 'Expense'}
-                          </Badge>
-                        );
-                      })()}
+                        {(() => {
+                          const selectedType = allocationTypes.find((t) => t.id === allocationTypeIds[alloc.id]);
+                          if (!selectedType) return null;
+                          return (
+                            <Badge
+                              variant="secondary"
+                              className={cn(
+                                'text-[10px] px-1.5 py-0 shrink-0',
+                                selectedType.classification === 'asset'
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                              )}
+                            >
+                              {selectedType.classification === 'asset' ? 'Asset' : 'Expense'}
+                            </Badge>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+
+                    {/* Fixed Amount checkbox */}
+                    <div className="flex items-center gap-1.5 shrink-0 select-none">
+                      <input
+                        type="checkbox"
+                        id={`fixed-${alloc.id}`}
+                        checked={allocationFixedStates[alloc.id] ?? false}
+                        onChange={(e) =>
+                          setAllocationFixedStates((prev) => ({
+                            ...prev,
+                            [alloc.id]: e.target.checked,
+                          }))
+                        }
+                        className="h-3.5 w-3.5 rounded border-input text-primary focus:ring-primary/50 cursor-pointer accent-primary bg-background"
+                      />
+                      <label
+                        htmlFor={`fixed-${alloc.id}`}
+                        className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                      >
+                        Fixed Amount
+                      </label>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -938,12 +1013,25 @@ export default function SettingsPage() {
                   >
                     {t.classification === 'asset' ? 'Asset' : 'Expense'}
                   </button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0 h-7 w-7 text-muted-foreground hover:text-destructive"
-                    disabled={deletingTypeIds.has(t.id)}
-                    onClick={async () => {
+                  <ConfirmDialog
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 h-7 w-7 text-muted-foreground hover:text-destructive"
+                        disabled={deletingTypeIds.has(t.id)}
+                      >
+                        {deletingTypeIds.has(t.id) ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                      </Button>
+                    }
+                    title="Delete Allocation Type"
+                    description={`Are you sure you want to delete the "${t.name}" allocation type? Existing allocations using this type will have their type cleared.`}
+                    confirmLabel="Delete Type"
+                    onConfirm={async () => {
                       setDeletingTypeIds((prev) => new Set(prev).add(t.id));
                       try {
                         await deleteAllocationType(t.id);
@@ -967,13 +1055,8 @@ export default function SettingsPage() {
                         });
                       }
                     }}
-                  >
-                    {deletingTypeIds.has(t.id) ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3 w-3" />
-                    )}
-                  </Button>
+                    disabled={deletingTypeIds.has(t.id)}
+                  />
                 </div>
               ))}
             </div>
@@ -1071,16 +1154,16 @@ export default function SettingsPage() {
             defaultValue={theme ?? 'system'}
             onValueChange={(val) => setTheme(val as string)}
           >
-            <TabsList className="w-full">
-              <TabsTrigger value="light" className="flex-1 gap-1.5">
+            <TabsList className="w-full h-auto p-1 sm:h-11">
+              <TabsTrigger value="light" className="flex-1 h-9 gap-2 text-sm">
                 <Sun className="h-4 w-4" />
                 Light
               </TabsTrigger>
-              <TabsTrigger value="dark" className="flex-1 gap-1.5">
+              <TabsTrigger value="dark" className="flex-1 h-9 gap-2 text-sm">
                 <Moon className="h-4 w-4" />
                 Dark
               </TabsTrigger>
-              <TabsTrigger value="system" className="flex-1 gap-1.5">
+              <TabsTrigger value="system" className="flex-1 h-9 gap-2 text-sm">
                 <Monitor className="h-4 w-4" />
                 System
               </TabsTrigger>

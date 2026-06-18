@@ -60,9 +60,9 @@ export default function DashboardLayout({
         <div data-onboarding="sidebar">
           <AppSidebar />
         </div>
-        <div className="flex min-w-0 flex-1 flex-col lg:ml-64">
+        <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden lg:ml-64">
           <Header />
-          <main className="flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
+          <main className="min-w-0 flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
             {children}
           </main>
           <MobileNav />

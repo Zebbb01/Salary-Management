@@ -1,11 +1,14 @@
 // Salary calculation types
 
+export type PayFrequency = 'weekly' | 'bi-weekly' | 'semi-monthly' | 'monthly';
+
 export interface SalaryConfig {
   id: string;
   user_id: string;
   name: string;
   full_time_salary: number;
   part_time_salary: number;
+  pay_frequency: PayFrequency;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +37,7 @@ export interface BudgetAllocation {
   color: string | null;
   display_order: number;
   allocation_type_id: string | null;
+  is_fixed: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +60,7 @@ export interface AllocationAmount {
   budgeted: number;
   actual: number;
   allocation_type?: string; // classification: 'expense' | 'asset'
+  is_fixed?: boolean;
 }
 
 export interface PayPeriod {
@@ -187,4 +192,12 @@ export interface FinancialSummary {
   totalAssets: number;
   monthlyExpenses: number;
   periodCount: number;
+  // Wage breakdowns for dashboard cards
+  fullTimeSalary: number;
+  partTimeSalary: number;
+  additionalIncomeTotal: number;
+  totalTax: number;
+  totalExpensesSum: number;
+  totalSpare: number;
+  totalSpareSpent: number;
 }

@@ -34,7 +34,7 @@ export async function getSalaryConfig(): Promise<SalaryConfig | null> {
 
 export async function updateSalaryConfig(
   id: string,
-  updates: Partial<Pick<SalaryConfig, 'name' | 'full_time_salary' | 'part_time_salary'>>
+  updates: Partial<Pick<SalaryConfig, 'name' | 'full_time_salary' | 'part_time_salary' | 'pay_frequency'>>
 ): Promise<SalaryConfig> {
   const { data, error } = await supabase
     .from('salary_configs')
@@ -74,6 +74,7 @@ export async function createBudgetAllocation(
     color?: string | null;
     display_order?: number;
     allocation_type_id?: string | null;
+    is_fixed?: boolean;
   }
 ): Promise<BudgetAllocation> {
   const { data, error } = await supabase
@@ -87,6 +88,7 @@ export async function createBudgetAllocation(
       color: allocation.color ?? null,
       display_order: allocation.display_order ?? 99,
       allocation_type_id: allocation.allocation_type_id ?? null,
+      is_fixed: allocation.is_fixed ?? false,
     })
     .select()
     .single();
@@ -106,7 +108,7 @@ export async function deleteBudgetAllocation(id: string): Promise<void> {
 
 export async function updateBudgetAllocation(
   id: string,
-  updates: Partial<Pick<BudgetAllocation, 'percentage' | 'description' | 'category' | 'icon_name' | 'color'>>
+  updates: Partial<Pick<BudgetAllocation, 'percentage' | 'description' | 'category' | 'icon_name' | 'color' | 'is_fixed'>>
 ): Promise<BudgetAllocation> {
   const { data, error } = await supabase
     .from('budget_allocations')
@@ -128,15 +130,17 @@ export async function updateMultipleAllocations(
     icon_name?: string | null;
     color?: string | null;
     allocation_type_id?: string | null;
+    is_fixed?: boolean;
   }[]
 ): Promise<void> {
-  const promises = allocations.map(({ id, percentage, category, description, icon_name, color, allocation_type_id }) => {
+  const promises = allocations.map(({ id, percentage, category, description, icon_name, color, allocation_type_id, is_fixed }) => {
     const updates: Record<string, unknown> = { percentage };
     if (category !== undefined) updates.category = category;
     if (description !== undefined) updates.description = description;
     if (icon_name !== undefined) updates.icon_name = icon_name;
     if (color !== undefined) updates.color = color;
     if (allocation_type_id !== undefined) updates.allocation_type_id = allocation_type_id;
+    if (is_fixed !== undefined) updates.is_fixed = is_fixed;
 
     return supabase
       .from('budget_allocations')
@@ -503,7 +507,7 @@ export async function initMonthlyBills(
 export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: string }): Promise<FinancialSummary> {
   let query = supabase
     .from('pay_periods')
-    .select('total_income, total_tax, total_deductions, total_expenses, total_savings, allocation_amounts')
+    .select('id, total_income, total_tax, total_deductions, total_expenses, total_savings, allocation_amounts, first_wage, second_wage, part_time, additional_income, spare_amount')
     .order('created_at', { ascending: false });
 
   if (opts?.dateFrom) query = query.gte('created_at', opts.dateFrom);
@@ -518,6 +522,30 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   const totalTax = periods.reduce((s, p) => s + Number(p.total_tax ?? 0), 0);
   const totalDeductions = periods.reduce((s, p) => s + Number(p.total_deductions ?? 0), 0);
   const netIncome = grossIncome - totalTax - totalDeductions;
+
+  // Wage breakdowns for dashboard cards
+  const fullTimeSalary = periods.reduce((s, p) => s + Number(p.first_wage ?? 0) + Number(p.second_wage ?? 0), 0);
+  const partTimeSalary = periods.reduce((s, p) => s + Number(p.part_time ?? 0), 0);
+  const additionalIncomeTotal = periods.reduce((s, p) => {
+    const items = (p.additional_income ?? []) as { amount: number }[];
+    return s + items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  }, 0);
+  const totalExpensesSum = periods.reduce((s, p) => s + Number(p.total_expenses ?? 0), 0);
+  const totalSpare = periods.reduce((s, p) => s + Number(p.spare_amount ?? 0), 0);
+
+  // Fetch spare transactions for ALL periods in range to compute total spent
+  let totalSpareSpent = 0;
+  const periodIds = periods.map((p) => p.id).filter(Boolean);
+  if (periodIds.length > 0) {
+    const { data: spareData, error: spareError } = await supabase
+      .from('spare_transactions')
+      .select('amount')
+      .in('pay_period_id', periodIds);
+
+    if (!spareError && spareData) {
+      totalSpareSpent = spareData.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    }
+  }
 
   // Compute totalAssets and monthlyExpenses from allocation_amounts with type info
   let totalAssets = 0;
@@ -561,6 +589,13 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     totalAssets,
     monthlyExpenses,
     periodCount: periods.length,
+    fullTimeSalary,
+    partTimeSalary,
+    additionalIncomeTotal,
+    totalTax,
+    totalExpensesSum,
+    totalSpare,
+    totalSpareSpent,
   };
 }
 
@@ -570,20 +605,25 @@ export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; d
   expenses: number;
   savings: number;
 }[]> {
+  // Build query with date filters applied BEFORE limit to ensure we get
+  // the most recent N periods within the date range, not the oldest N globally.
   let query = supabase
     .from('pay_periods')
-    .select('period_label, total_income, total_expenses, total_savings')
-    .order('created_at', { ascending: true })
-    .limit(limit);
+    .select('period_label, total_income, total_expenses, total_savings');
 
+  // Apply date filters first so the limit applies to the filtered set
   if (opts?.dateFrom) query = query.gte('created_at', opts.dateFrom);
   if (opts?.dateTo) query = query.lte('created_at', opts.dateTo);
+
+  // Order descending and limit to get the N most recent in range
+  query = query.order('created_at', { ascending: false }).limit(limit);
 
   const { data, error } = await query;
 
   if (error) throw error;
 
-  return (data ?? []).map((p) => ({
+  // Reverse to chronological order (ascending) for chart display
+  return (data ?? []).reverse().map((p) => ({
     label: p.period_label?.split(' - ')[0] ?? '',
     income: Number(p.total_income ?? 0),
     expenses: Number(p.total_expenses ?? 0),

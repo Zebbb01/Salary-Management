@@ -22,6 +22,7 @@ import {
   Check,
   ChevronUp,
   ChevronDown,
+  Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -46,7 +47,7 @@ import {
   getBillPayments,
   getAllocationTypes,
 } from '@/features/salary/services/salary.service';
-import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType } from '@/features/salary/types/salary.types';
+import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType, PayFrequency } from '@/features/salary/types/salary.types';
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -55,6 +56,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 // ---------------------------------------------------------------------------
 // Animation variants
@@ -188,9 +190,10 @@ export default function CalculatorPage() {
   const [paidAllocationIds, setPaidAllocationIds] = useState<Set<string>>(new Set());
   // Additional income rows
   const [additionalIncomeRows, setAdditionalIncomeRows] = useState<{ label: string; amount: string }[]>([]);
+  const [payFrequency, setPayFrequency] = useState<PayFrequency>('semi-monthly');
 
   const defaultValues: PayPeriodFormData = {
-    period_label: generatePeriodLabel(),
+    period_label: generatePeriodLabel(new Date(), payFrequency),
     first_wage: 0,
     second_wage: 0,
     part_time: 0,
@@ -242,6 +245,7 @@ export default function CalculatorPage() {
       let computed: BudgetAllocationWithAmount[] = [];
       if (config) {
         setSalaryConfig(config);
+        setPayFrequency(config.pay_frequency ?? 'semi-monthly');
         const allocs = await getBudgetAllocations(config.id);
         const combinedSalary = config.full_time_salary + config.part_time_salary;
         computed = computeAllocations(allocs, combinedSalary);
@@ -275,6 +279,7 @@ export default function CalculatorPage() {
               budgeted: a.amount,
               actual: a.amount,
               allocation_type: classification,
+              is_fixed: a.is_fixed,
             };
           });
         // Set allocation_amounts as default
@@ -347,7 +352,7 @@ export default function CalculatorPage() {
         setSelectedPeriodId(last.id);
 
         reset({
-          period_label: generatePeriodLabel(),
+          period_label: generatePeriodLabel(new Date(), payFrequency),
           first_wage: last.first_wage,
           second_wage: last.second_wage,
           part_time: last.part_time,
@@ -646,11 +651,12 @@ export default function CalculatorPage() {
           budgeted: alloc.budgeted,
           actual: remaining,
           allocation_type: alloc.allocation_type,
+          is_fixed: alloc.is_fixed,
         };
       });
 
       // Update form for next period
-      setValue('period_label', generatePeriodLabel());
+      setValue('period_label', generatePeriodLabel(new Date(), payFrequency));
       setValue('allocation_amounts', nextAllocAmounts);
 
       // Refresh saved periods list for spare tracker
@@ -675,17 +681,53 @@ export default function CalculatorPage() {
   const originalSpare = selectedPeriod?.spare_amount ?? 0;
   const remainingSpare = originalSpare - spareTotal;
 
+  // Period label options based on pay frequency
+  const periodLabelOptions = (() => {
+    switch (payFrequency) {
+      case 'monthly':
+        return [
+          { value: 'Monthly Pay', label: 'Monthly Pay' },
+          { value: 'Part-Time Pay', label: 'Part-Time Pay' },
+          { value: 'Bonus', label: 'Bonus' },
+          { value: 'custom', label: 'Custom' },
+        ];
+      case 'bi-weekly':
+        return [
+          { value: 'Pay Period', label: 'Pay Period' },
+          { value: 'Part-Time Pay', label: 'Part-Time Pay' },
+          { value: 'Bonus', label: 'Bonus' },
+          { value: 'custom', label: 'Custom' },
+        ];
+      case 'weekly':
+        return [
+          { value: 'Weekly Pay', label: 'Weekly Pay' },
+          { value: 'Part-Time Pay', label: 'Part-Time Pay' },
+          { value: 'Bonus', label: 'Bonus' },
+          { value: 'custom', label: 'Custom' },
+        ];
+      case 'semi-monthly':
+      default:
+        return [
+          { value: 'First Wage', label: 'First Wage' },
+          { value: 'Second Wage', label: 'Second Wage' },
+          { value: 'Part-Time Pay', label: 'Part-Time Pay' },
+          { value: 'Bonus', label: 'Bonus' },
+          { value: 'custom', label: 'Custom' },
+        ];
+    }
+  })();
+
   return (
     <div>
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs defaultValue="calculator">
           <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-            <TabsList className="w-full sm:w-auto">
-              <TabsTrigger value="calculator">
+            <TabsList className="w-full h-auto p-1 sm:w-auto sm:h-11">
+              <TabsTrigger value="calculator" className="h-9 gap-2 px-4 text-sm sm:px-5">
                 <Calculator className="h-4 w-4" />
                 Payroll
               </TabsTrigger>
-              <TabsTrigger value="spare-tracker">
+              <TabsTrigger value="spare-tracker" className="h-9 gap-2 px-4 text-sm sm:px-5">
                 <Wallet className="h-4 w-4" />
                 Spare Tracker
               </TabsTrigger>
@@ -724,7 +766,7 @@ export default function CalculatorPage() {
                           !includeFirstWage ? 'text-muted-foreground/60' : 'text-muted-foreground'
                         )}
                       >
-                        First Wage
+                        {payFrequency === 'monthly' ? 'Salary' : payFrequency === 'bi-weekly' ? 'Pay Amount' : payFrequency === 'weekly' ? 'Weekly Pay' : 'First Wage'}
                       </Label>
                       {!includeFirstWage && (
                         <Badge variant="outline" className="ml-auto text-xs">
@@ -762,7 +804,8 @@ export default function CalculatorPage() {
                     )}
                   </div>
 
-                  {/* Second Wage - with toggle */}
+                  {/* Second Wage - with toggle (only for semi-monthly) */}
+                  {payFrequency === 'semi-monthly' && (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <input
@@ -815,6 +858,7 @@ export default function CalculatorPage() {
                       <p className="text-xs text-destructive">{errors.second_wage.message}</p>
                     )}
                   </div>
+                  )}
 
                   {/* Part-Time - with toggle */}
                   <div className="space-y-1.5">
@@ -1069,8 +1113,8 @@ export default function CalculatorPage() {
                     </div>
                   ) : (
                     <>
-                      {/* Header row */}
-                      <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
+                      {/* Header row - hidden on mobile */}
+                      <div className="hidden sm:flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1">
                         <span className="flex-1">Category</span>
                         <span className="w-28 text-right">Budgeted</span>
                         <span className="w-28">Actual</span>
@@ -1082,17 +1126,22 @@ export default function CalculatorPage() {
                         const budgeted = Number(item?.budgeted) || 0;
                         const diff = actual - budgeted;
                         const isFullyPaid = paidAllocationIds.has(item?.allocation_id || '');
+                        const isFixed = item?.is_fixed ?? false;
                         return (
                           <div key={item?.allocation_id || index} className={cn(
                             'space-y-1.5',
                             isFullyPaid && 'opacity-50'
                           )}>
-                            <div className="flex items-center gap-3">
+                            {/* Desktop layout */}
+                            <div className="hidden sm:flex items-center gap-3">
                               <span className={cn(
-                                'flex-1 text-sm font-medium capitalize truncate',
+                                'flex items-center gap-1.5 flex-1 text-sm font-medium capitalize truncate',
                                 isFullyPaid ? 'text-muted-foreground line-through' : 'text-foreground'
                               )}>
                                 {item?.category || 'Unknown'}
+                                {isFixed && (
+                                  <Lock className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                )}
                               </span>
                               <span className="w-28 text-right text-sm tabular-nums text-muted-foreground">
                                 P {formatPHP(budgeted)}
@@ -1103,9 +1152,11 @@ export default function CalculatorPage() {
                                   step="0.01"
                                   min="0"
                                   disabled={isFullyPaid}
+                                  readOnly={isFixed}
                                   className={cn(
                                     'h-8 tabular-nums text-sm',
-                                    isFullyPaid && 'opacity-40 cursor-not-allowed'
+                                    isFullyPaid && 'opacity-40 cursor-not-allowed',
+                                    isFixed && 'opacity-70 cursor-not-allowed bg-muted/20 border-muted focus-visible:ring-0'
                                   )}
                                   {...register(`allocation_amounts.${index}.actual`, { valueAsNumber: true })}
                                 />
@@ -1113,6 +1164,10 @@ export default function CalculatorPage() {
                               {isFullyPaid ? (
                                 <Badge variant="outline" className="w-20 justify-center text-xs text-emerald-500 border-emerald-500/30">
                                   Paid
+                                </Badge>
+                              ) : isFixed ? (
+                                <Badge variant="outline" className="w-20 justify-center text-xs text-muted-foreground border-border/30 bg-muted/10">
+                                  Fixed
                                 </Badge>
                               ) : diff !== 0 ? (
                                 <span className={cn(
@@ -1125,9 +1180,61 @@ export default function CalculatorPage() {
                                 <span className="w-20" />
                               )}
                             </div>
+                            {/* Mobile layout */}
+                            <div className="sm:hidden space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className={cn(
+                                  'flex items-center gap-1.5 text-sm font-medium capitalize',
+                                  isFullyPaid ? 'text-muted-foreground line-through' : 'text-foreground'
+                                )}>
+                                  {item?.category || 'Unknown'}
+                                  {isFixed && (
+                                    <Lock className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                                  )}
+                                </span>
+                                {isFullyPaid ? (
+                                  <Badge variant="outline" className="text-xs text-emerald-500 border-emerald-500/30">
+                                    Paid
+                                  </Badge>
+                                ) : isFixed ? (
+                                  <Badge variant="outline" className="text-xs text-muted-foreground border-border/30 bg-muted/10">
+                                    Fixed
+                                  </Badge>
+                                ) : diff !== 0 ? (
+                                  <span className={cn(
+                                    'text-xs tabular-nums font-medium',
+                                    diff < 0 ? 'text-emerald-500' : 'text-amber-500'
+                                  )}>
+                                    {diff > 0 ? '+' : ''}{formatPHP(diff)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <span className="text-[11px] text-muted-foreground">Budgeted</span>
+                                  <p className="text-sm tabular-nums text-muted-foreground">P {formatPHP(budgeted)}</p>
+                                </div>
+                                <div>
+                                  <span className="text-[11px] text-muted-foreground">Actual</span>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    disabled={isFullyPaid}
+                                    readOnly={isFixed}
+                                    className={cn(
+                                      'h-9 tabular-nums text-sm',
+                                      isFullyPaid && 'opacity-40 cursor-not-allowed',
+                                      isFixed && 'opacity-70 cursor-not-allowed bg-muted/20 border-muted focus-visible:ring-0'
+                                    )}
+                                    {...register(`allocation_amounts.${index}.actual`, { valueAsNumber: true })}
+                                  />
+                                </div>
+                              </div>
+                            </div>
                             {/* Quick-fill buttons */}
-                            {!isFullyPaid && budgeted > 0 && (
-                              <div className="flex items-center gap-1.5 pl-[calc(100%-12rem-5rem-1.5rem)]">
+                            {!isFullyPaid && !isFixed && budgeted > 0 && (
+                              <div className="flex items-center gap-1.5 sm:pl-[calc(100%-12rem-5rem-1.5rem)]">
                                 <button
                                   type="button"
                                   onClick={() => setValue(`allocation_amounts.${index}.actual`, Math.round(budgeted / 2 * 100) / 100, { shouldValidate: true })}
@@ -1192,7 +1299,7 @@ export default function CalculatorPage() {
                           value={
                             (() => {
                               const val = watch('period_label') || '';
-                              const types = ['First Wage', 'Second Wage', 'Part-Time Pay', 'Bonus'];
+                              const types = periodLabelOptions.filter((o) => o.value !== 'custom').map((o) => o.value);
                               const matched = types.find((t) => val.includes(t));
                               return matched ?? 'custom';
                             })()
@@ -1214,17 +1321,15 @@ export default function CalculatorPage() {
                             }
                           }}
                         >
-                          <option value="First Wage">First Wage</option>
-                          <option value="Second Wage">Second Wage</option>
-                          <option value="Part-Time Pay">Part-Time Pay</option>
-                          <option value="Bonus">Bonus</option>
-                          <option value="custom">Custom</option>
+                          {periodLabelOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
                         </select>
                       </div>
                       {/* Show text input only when Custom is selected */}
                       {(() => {
                         const val = watch('period_label') || '';
-                        const types = ['First Wage', 'Second Wage', 'Part-Time Pay', 'Bonus'];
+                        const types = periodLabelOptions.filter((o) => o.value !== 'custom').map((o) => o.value);
                         const isCustom = !types.some((t) => val.includes(t));
                         if (!isCustom) return null;
                         return (
@@ -1292,7 +1397,7 @@ export default function CalculatorPage() {
                             </p>
                             <div className="space-y-1.5">
                               <SummaryRow
-                                label="First Wage"
+                                label={payFrequency === 'monthly' ? 'Salary' : payFrequency === 'bi-weekly' ? 'Pay Amount' : payFrequency === 'weekly' ? 'Weekly Pay' : 'First Wage'}
                                 value={includeFirstWage ? (Number(watchedValues.first_wage) || 0) : 0}
                                 muted={!includeFirstWage}
                               />
@@ -1303,7 +1408,7 @@ export default function CalculatorPage() {
                                 </div>
                               )}
                               <SummaryRow
-                                label="Second Wage"
+                                label={payFrequency === 'semi-monthly' ? 'Second Wage' : 'Second Wage'}
                                 value={includeSecondWage ? (Number(watchedValues.second_wage) || 0) : 0}
                                 muted={!includeSecondWage}
                               />
@@ -1545,55 +1650,65 @@ export default function CalculatorPage() {
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
                             transition={{ duration: 0.2 }}
-                            className="flex items-end gap-2"
                           >
-                            <div className="flex-1">
-                              {index === 0 && (
-                                <Label className="mb-1.5 text-muted-foreground">Description</Label>
-                              )}
-                              <Input
-                                type="text"
-                                placeholder="Lunch, grab, shopping..."
-                                value={row.description}
-                                onChange={(e) => updateSpareRow(index, 'description', e.target.value)}
-                                className="h-9"
-                              />
+                            {/* Desktop: single row | Mobile: stacked grid */}
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px_140px_36px] sm:items-end">
+                              <div>
+                                {index === 0 && (
+                                  <Label className="mb-1.5 text-muted-foreground">Description</Label>
+                                )}
+                                <Input
+                                  type="text"
+                                  placeholder="Lunch, grab, shopping..."
+                                  value={row.description}
+                                  onChange={(e) => updateSpareRow(index, 'description', e.target.value)}
+                                  className="h-10 sm:h-9"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 sm:contents">
+                                <div>
+                                  {index === 0 && (
+                                    <Label className="mb-1.5 text-muted-foreground sm:block hidden">Amount</Label>
+                                  )}
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="0.00"
+                                    value={row.amount}
+                                    onChange={(e) => updateSpareRow(index, 'amount', e.target.value)}
+                                    className="h-10 tabular-nums sm:h-9"
+                                  />
+                                </div>
+                                <div>
+                                  {index === 0 && (
+                                    <Label className="mb-1.5 text-muted-foreground sm:block hidden">Date</Label>
+                                  )}
+                                  <Input
+                                    type="date"
+                                    value={row.date}
+                                    onChange={(e) => updateSpareRow(index, 'date', e.target.value)}
+                                    className="h-10 sm:h-9"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex sm:block">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-10 w-10 shrink-0 text-muted-foreground hover:text-destructive sm:h-9 sm:w-9 ml-auto"
+                                  onClick={() => removeSpareRow(index)}
+                                  disabled={spareRows.length <= 1}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
                             </div>
-                            <div className="w-24">
-                              {index === 0 && (
-                                <Label className="mb-1.5 text-muted-foreground">Amount</Label>
-                              )}
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                placeholder="0.00"
-                                value={row.amount}
-                                onChange={(e) => updateSpareRow(index, 'amount', e.target.value)}
-                                className="h-9 tabular-nums"
-                              />
-                            </div>
-                            <div className="w-36">
-                              {index === 0 && (
-                                <Label className="mb-1.5 text-muted-foreground">Date</Label>
-                              )}
-                              <Input
-                                type="date"
-                                value={row.date}
-                                onChange={(e) => updateSpareRow(index, 'date', e.target.value)}
-                                className="h-9"
-                              />
-                            </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeSpareRow(index)}
-                              disabled={spareRows.length <= 1}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            {/* Separator between rows on mobile */}
+                            {index < spareRows.length - 1 && (
+                              <Separator className="mt-3 sm:hidden" />
+                            )}
                           </motion.div>
                         ))}
                       </div>
@@ -1682,15 +1797,22 @@ export default function CalculatorPage() {
                               <span className="text-sm font-semibold tabular-nums font-display text-rose-500">
                                 -P {formatPHP(txn.amount)}
                               </span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                onClick={() => handleDeleteSpare(txn.id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
+                              <ConfirmDialog
+                                trigger={
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                }
+                                title="Delete Transaction"
+                                description={`Are you sure you want to delete "${txn.description}" (P ${formatPHP(txn.amount)})? This action cannot be undone.`}
+                                confirmLabel="Delete"
+                                onConfirm={() => handleDeleteSpare(txn.id)}
+                              />
                             </div>
                           </motion.div>
                         ))}

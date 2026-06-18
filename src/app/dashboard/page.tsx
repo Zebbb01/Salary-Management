@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   DollarSign,
@@ -19,6 +19,7 @@ import {
   BarChart3,
   CalendarRange,
   Filter,
+  Lock,
 } from 'lucide-react';
 import {
   PieChart,
@@ -68,6 +69,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
+import { MonthYearPicker, monthYearToDateRange, type MonthYearSelection } from '@/components/ui/month-year-picker';
 import { Input } from '@/components/ui/input';
 
 // ============================================
@@ -331,6 +333,36 @@ function TrendChartTooltip({
   payload?: TrendPayloadItem[];
   label?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !active) return;
+
+    // Reset transform to measure natural position
+    el.style.transform = '';
+    const rect = el.getBoundingClientRect();
+    const transforms: string[] = [];
+
+    // Flip horizontally
+    if (rect.right > window.innerWidth - 16) {
+      transforms.push('translateX(calc(-100% - 30px))');
+    } else if (rect.left < 16) {
+      transforms.push('translateX(30px)');
+    }
+
+    // Flip vertically
+    if (rect.bottom > window.innerHeight - 16) {
+      transforms.push('translateY(calc(-100% - 20px))');
+    } else if (rect.top < 16) {
+      transforms.push('translateY(20px)');
+    }
+
+    if (transforms.length) {
+      el.style.transform = transforms.join(' ');
+    }
+  });
+
   if (!active || !payload?.length) return null;
 
   const income = payload.find((p) => p.dataKey === 'income')?.value ?? 0;
@@ -338,37 +370,39 @@ function TrendChartTooltip({
   const net = income - expenses;
 
   return (
-    <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
-      <CardContent className="px-3.5 py-3">
-        <p className="text-sm font-semibold text-foreground mb-2">{label}</p>
-        <div className="space-y-1.5">
-          {payload.map((entry) => (
-            <div key={entry.dataKey} className="flex items-center justify-between gap-6 text-xs">
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span
-                  className="inline-block h-2 w-2 rounded-full"
-                  style={{ backgroundColor: entry.color }}
-                />
-                {entry.name}
-              </span>
-              <span className="font-semibold tabular-nums text-foreground">
-                PHP {formatPHP(entry.value)}
-              </span>
-            </div>
-          ))}
-        </div>
-        <Separator className="my-2" />
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Net</span>
-          <span className={cn(
-            'font-bold tabular-nums',
-            net >= 0 ? 'text-emerald-500' : 'text-rose-500'
-          )}>
-            {net >= 0 ? '+' : ''}PHP {formatPHP(net)}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+    <div ref={ref}>
+      <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
+        <CardContent className="px-3.5 py-3">
+          <p className="text-sm font-semibold text-foreground mb-2">{label}</p>
+          <div className="space-y-1.5">
+            {payload.map((entry) => (
+              <div key={entry.dataKey} className="flex items-center justify-between gap-6 text-xs">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  {entry.name}
+                </span>
+                <span className="font-semibold tabular-nums text-foreground">
+                  PHP {formatPHP(entry.value)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <Separator className="my-2" />
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Net</span>
+            <span className={cn(
+              'font-bold tabular-nums',
+              net >= 0 ? 'text-emerald-500' : 'text-rose-500'
+            )}>
+              {net >= 0 ? '+' : ''}PHP {formatPHP(net)}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -468,9 +502,9 @@ function DashboardSkeleton() {
 // DATE FILTER TYPES
 // ============================================
 
-type DateFilterPreset = 'this-month' | 'last-month' | 'last-3-months' | 'this-year' | 'all-time';
+type DateFilterPreset = 'this-month' | 'last-month' | 'last-3-months' | 'this-year' | 'all-time' | 'custom';
 
-function getDateRange(preset: DateFilterPreset): { dateFrom?: string; dateTo?: string; billMonth: string } {
+function getDateRange(preset: DateFilterPreset, customRange?: MonthYearSelection | null): { dateFrom?: string; dateTo?: string; billMonth: string } {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -495,6 +529,15 @@ function getDateRange(preset: DateFilterPreset): { dateFrom?: string; dateTo?: s
     case 'this-year': {
       const from = new Date(year, 0, 1).toISOString();
       return { dateFrom: from, billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
+    }
+    case 'custom': {
+      if (customRange) {
+        const { dateFrom, dateTo } = monthYearToDateRange(customRange);
+        const m = customRange.month + 1;
+        const y = customRange.year;
+        return { dateFrom, dateTo, billMonth: `${y}-${String(m).padStart(2, '0')}` };
+      }
+      return { billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
     }
     case 'all-time':
     default:
@@ -523,6 +566,7 @@ export default function DashboardPage() {
 
   // Date filter
   const [dateFilter, setDateFilter] = useState<DateFilterPreset>('this-month');
+  const [customMonth, setCustomMonth] = useState<MonthYearSelection | null>(null);
 
   // New state
   const [billPayments, setBillPayments] = useState<BillPayment[]>([]);
@@ -538,18 +582,18 @@ export default function DashboardPage() {
   const handleTrendFilter = useCallback(async (limit: number) => {
     setTrendLimit(limit);
     try {
-      const { dateFrom, dateTo } = getDateRange(dateFilter);
+      const { dateFrom, dateTo } = getDateRange(dateFilter, customMonth);
       const trend = await getPayPeriodTrend(limit, { dateFrom, dateTo });
       setTrendData(trend);
     } catch {
       // Silently fail
     }
-  }, [dateFilter]);
+  }, [dateFilter, customMonth]);
 
-  const fetchData = useCallback(async (filter: DateFilterPreset = 'this-month') => {
+  const fetchData = useCallback(async (filter: DateFilterPreset = 'this-month', custom?: MonthYearSelection | null) => {
     try {
       const supabase = createClient();
-      const { dateFrom, dateTo, billMonth } = getDateRange(filter);
+      const { dateFrom, dateTo, billMonth } = getDateRange(filter, custom);
       const dateOpts = { dateFrom, dateTo };
 
       // Get current user
@@ -645,8 +689,8 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    fetchData(dateFilter);
-  }, [fetchData, dateFilter]);
+    fetchData(dateFilter, customMonth);
+  }, [fetchData, dateFilter, customMonth]);
 
 
 
@@ -708,20 +752,19 @@ export default function DashboardPage() {
     return <EmptyState />;
   }
 
-  // Use latest pay period data for cards, fallback to config if no periods saved
-  const fullTimeSalary = latestPeriod
-    ? (latestPeriod.first_wage ?? 0) + (latestPeriod.second_wage ?? 0)
-    : 0;
-  const partTimeSalary = latestPeriod
-    ? (latestPeriod.part_time ?? 0)
-    : 0;
+  // Use aggregated financial summary for card values (sums across ALL periods in range)
+  // This prevents a spare-only period from zeroing out salary/expense cards
+  const fullTimeSalary = financialSummary?.fullTimeSalary ?? 0;
+  const partTimeSalary = financialSummary?.partTimeSalary ?? 0;
   // Show part-time cards if config has part-time salary (even if no period saved yet)
   const hasPartTime = (salaryConfig.part_time_salary ?? 0) > 0;
   const totalSalary = fullTimeSalary + partTimeSalary;
-  const taxAmount = latestPeriod?.total_tax ?? 0;
-  const totalExpenses = latestPeriod?.total_expenses ?? 0;
-  const spareAmount = latestPeriod?.spare_amount ?? 0;
-  const remainingSpare = spareAmount - spareSpent;
+  const taxAmount = financialSummary?.totalTax ?? 0;
+  const totalExpenses = financialSummary?.totalExpensesSum ?? 0;
+  // Spare: use aggregated spare and spent from ALL periods in range
+  const spareAmount = financialSummary?.totalSpare ?? 0;
+  const totalSpareSpent = financialSummary?.totalSpareSpent ?? 0;
+  const remainingSpare = spareAmount - totalSpareSpent;
 
   // Build a map of allocation_type_id -> classification
   const typeClassificationMap = new Map(
@@ -797,10 +840,10 @@ export default function DashboardPage() {
             {DATE_FILTER_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setDateFilter(opt.value)}
+                onClick={() => { setDateFilter(opt.value); setCustomMonth(null); }}
                 className={cn(
                   'whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer',
-                  dateFilter === opt.value
+                  dateFilter === opt.value && !customMonth
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
@@ -808,6 +851,18 @@ export default function DashboardPage() {
                 {opt.label}
               </button>
             ))}
+            <MonthYearPicker
+              value={customMonth}
+              onChange={(val) => {
+                setCustomMonth(val);
+                if (val) {
+                  setDateFilter('custom');
+                } else {
+                  setDateFilter('this-month');
+                }
+              }}
+              placeholder="Custom"
+            />
           </div>
         </motion.div>
       </div>
@@ -919,7 +974,7 @@ export default function DashboardPage() {
             icon={Sparkles}
             colorClass="bg-purple-500/10 text-purple-500"
             index={3}
-            subtitle={spareSpent > 0 ? `PHP ${formatPHP(spareSpent)} spent from spare` : undefined}
+            subtitle={totalSpareSpent > 0 ? `PHP ${formatPHP(totalSpareSpent)} spent from spare` : undefined}
           />
         )}
       </div>
@@ -937,9 +992,9 @@ export default function DashboardPage() {
             <span className="text-3xl font-semibold tabular-nums font-display text-white sm:text-4xl">
               PHP {formatPHP(remainingSpare)}
             </span>
-            {spareSpent > 0 && (
+            {totalSpareSpent > 0 && (
               <span className="text-xs text-white/60">
-                PHP {formatPHP(spareSpent)} spent from spare
+                PHP {formatPHP(totalSpareSpent)} spent from spare
               </span>
             )}
           </div>
@@ -1020,9 +1075,9 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {trendData.length > 0 ? (
-              <div className="h-80">
+              <div className="h-80 min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <AreaChart data={trendData} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#34d399" stopOpacity={0.3} />
@@ -1059,7 +1114,7 @@ export default function DashboardPage() {
                       offset={15}
                       isAnimationActive={false}
                       cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
-                      wrapperStyle={{ outline: 'none' }}
+                      wrapperStyle={{ outline: 'none', zIndex: 50 }}
                     />
                     <Legend
                       iconType="circle"
@@ -1221,8 +1276,11 @@ export default function DashboardPage() {
                           <CategoryIcon name={allocation.icon_name} className="h-4 w-4" />
                         </div>
                         <div className="flex min-w-0 flex-col">
-                          <span className="text-sm font-medium capitalize text-foreground">
+                          <span className="flex items-center gap-1.5 text-sm font-medium capitalize text-foreground">
                             {allocation.category}
+                            {allocation.is_fixed && (
+                              <Lock className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+                            )}
                           </span>
                           {allocation.description && (
                             <span className="truncate text-xs text-muted-foreground">

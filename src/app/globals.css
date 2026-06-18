@@ -391,3 +391,26 @@ h1, h2, h3, h4, h5, h6 {
     animation: none;
   }
 }
+
+/* ============================================
+   RECHARTS TOOLTIP OVERFLOW FIX
+   Prevents tooltip clipping at chart edges
+   while the layout overflow-x-hidden prevents
+   horizontal page scroll
+   ============================================ */
+
+.recharts-wrapper,
+.recharts-surface {
+  overflow: visible !important;
+}
+
+.recharts-tooltip-wrapper {
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* Prevent chart responsive container from
+   expanding beyond its parent width */
+.recharts-responsive-container {
+  min-width: 0;
+}

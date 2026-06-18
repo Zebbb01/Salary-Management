@@ -43,6 +43,7 @@ export const allocationAmountSchema = z.object({
   budgeted: z.number().min(0),
   actual: z.number().min(0, 'Amount must be positive'),
   allocation_type: z.string().optional(),
+  is_fixed: z.boolean().optional(),
 });
 
 // Pay period form validation
