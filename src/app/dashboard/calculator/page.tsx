@@ -23,6 +23,7 @@ import {
   ChevronUp,
   ChevronDown,
   Lock,
+  ShoppingCart,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -46,15 +47,19 @@ import {
   upsertBillPayment,
   getBillPayments,
   getAllocationTypes,
+  getConsumableExpenses,
+  createConsumableExpense,
+  deleteConsumableExpense,
 } from '@/features/salary/services/salary.service';
-import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType, PayFrequency } from '@/features/salary/types/salary.types';
+import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType, PayFrequency, ConsumableExpense } from '@/features/salary/types/salary.types';
 
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
@@ -192,6 +197,19 @@ export default function CalculatorPage() {
   const [additionalIncomeRows, setAdditionalIncomeRows] = useState<{ label: string; amount: string }[]>([]);
   const [payFrequency, setPayFrequency] = useState<PayFrequency>('semi-monthly');
 
+  // Consumable expenses state
+  const [consumableExpenses, setConsumableExpenses] = useState<ConsumableExpense[]>([]);
+  const [consumableAllowance, setConsumableAllowance] = useState(4500);
+  const [isLoadingConsumable, setIsLoadingConsumable] = useState(false);
+  const [isAddingConsumable, setIsAddingConsumable] = useState(false);
+  const [consumableRows, setConsumableRows] = useState<{ description: string; amount: string; date: string }[]>([
+    { description: '', amount: '', date: new Date().toISOString().split('T')[0] },
+  ]);
+  const [currentMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+
   const defaultValues: PayPeriodFormData = {
     period_label: generatePeriodLabel(new Date(), payFrequency),
     first_wage: 0,
@@ -246,10 +264,20 @@ export default function CalculatorPage() {
       if (config) {
         setSalaryConfig(config);
         setPayFrequency(config.pay_frequency ?? 'semi-monthly');
+        setConsumableAllowance(config.consumable_allowance ?? 4500);
         const allocs = await getBudgetAllocations(config.id);
         const combinedSalary = config.full_time_salary + config.part_time_salary;
         computed = computeAllocations(allocs, combinedSalary);
         setBudgetAllocations(computed);
+
+        // Load consumable expenses for current month
+        try {
+          const cMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+          const expenses = await getConsumableExpenses(cMonth);
+          setConsumableExpenses(expenses);
+        } catch {
+          // Silently fail
+        }
 
         // Pre-fill allocation_amounts from budget allocations (excluding 'Spare')
         // Fetch allocation types to include classification
@@ -730,6 +758,10 @@ export default function CalculatorPage() {
               <TabsTrigger value="spare-tracker" className="h-9 gap-2 px-4 text-sm sm:px-5">
                 <Wallet className="h-4 w-4" />
                 Spare Tracker
+              </TabsTrigger>
+              <TabsTrigger value="consumable" className="h-9 gap-2 px-4 text-sm sm:px-5">
+                <ShoppingCart className="h-4 w-4" />
+                Consumable
               </TabsTrigger>
             </TabsList>
           </div>
@@ -1354,22 +1386,32 @@ export default function CalculatorPage() {
 
               {/* ----- Save Button ----- */}
               <motion.div variants={fadeIn} data-onboarding="calculator-save">
-                <Button
-                  type="submit"
-                  variant="default"
-                  size="lg"
+                <ConfirmDialog
+                  trigger={
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="lg"
+                      disabled={isSaving}
+                      className="w-full h-12 text-sm font-medium"
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Pay Period'
+                      )}
+                    </Button>
+                  }
+                  title="Save Pay Period?"
+                  description="This will create a new pay period record with the current values. Make sure all amounts are correct before saving."
+                  confirmLabel="Save"
+                  destructive={false}
+                  onConfirm={() => handleSubmit(onSubmit)()}
                   disabled={isSaving}
-                  className="w-full h-12 text-sm font-medium"
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    'Save Pay Period'
-                  )}
-                </Button>
+                />
               </motion.div>
             </motion.div>
 
@@ -1876,6 +1918,264 @@ export default function CalculatorPage() {
                     </CardContent>
                   </Card>
               </div>
+            </motion.div>
+          </TabsContent>
+
+          {/* ============== CONSUMABLE EXPENSES TAB ============== */}
+          <TabsContent value="consumable" className="overflow-visible">
+            <motion.div
+              className="mx-auto max-w-3xl space-y-6"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              {/* Budget Overview Card */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
+                      <ShoppingCart className="h-4 w-4 text-amber-500" />
+                    </div>
+                    <div>
+                      <CardTitle>Consumable Budget</CardTitle>
+                      <CardDescription>
+                        {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })} - Track daily expenses against your monthly allowance
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Budget Progress */}
+                  {(() => {
+                    const totalSpent = consumableExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+                    const remaining = consumableAllowance - totalSpent;
+                    const percentage = consumableAllowance > 0 ? Math.min((totalSpent / consumableAllowance) * 100, 100) : 0;
+                    const isOver = totalSpent > consumableAllowance;
+                    return (
+                      <>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="rounded-lg bg-muted/50 p-3 text-center">
+                            <p className="text-[11px] text-muted-foreground">Budget</p>
+                            <p className="text-sm font-bold tabular-nums text-foreground">PHP {formatPHP(consumableAllowance)}</p>
+                          </div>
+                          <div className="rounded-lg bg-amber-500/10 p-3 text-center">
+                            <p className="text-[11px] text-muted-foreground">Spent</p>
+                            <p className="text-sm font-bold tabular-nums text-amber-500">PHP {formatPHP(totalSpent)}</p>
+                          </div>
+                          <div className={cn('rounded-lg p-3 text-center', isOver ? 'bg-rose-500/10' : 'bg-emerald-500/10')}>
+                            <p className="text-[11px] text-muted-foreground">{isOver ? 'Over Budget' : 'Remaining'}</p>
+                            <p className={cn('text-sm font-bold tabular-nums', isOver ? 'text-rose-500' : 'text-emerald-500')}>
+                              {isOver ? '-' : ''}PHP {formatPHP(Math.abs(remaining))}
+                            </p>
+                          </div>
+                        </div>
+                        {/* Progress Bar */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                            <span>{percentage.toFixed(0)}% used</span>
+                            <span>{consumableExpenses.length} expense{consumableExpenses.length !== 1 ? 's' : ''}</span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                            <motion.div
+                              className={cn(
+                                'h-full rounded-full transition-colors duration-300',
+                                percentage >= 100 ? 'bg-rose-500' : percentage >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                              )}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${Math.min(percentage, 100)}%` }}
+                              transition={{ duration: 0.6, ease: 'easeOut' }}
+                            />
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+
+              {/* Add Expense Card */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Add Daily Expense</CardTitle>
+                  <CardDescription>Log your daily consumable spending</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {consumableRows.map((row, idx) => (
+                    <div key={idx} className="flex items-end gap-2">
+                      <div className="flex-1 min-w-0">
+                        <Label htmlFor={`cons-date-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Date</Label>
+                        <Input
+                          id={`cons-date-${idx}`}
+                          type="date"
+                          value={row.date}
+                          onChange={(e) => {
+                            const updated = [...consumableRows];
+                            updated[idx] = { ...updated[idx], date: e.target.value };
+                            setConsumableRows(updated);
+                          }}
+                          className="h-9 text-sm"
+                        />
+                      </div>
+                      <div className="flex-[2] min-w-0">
+                        <Label htmlFor={`cons-desc-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Description</Label>
+                        <Input
+                          id={`cons-desc-${idx}`}
+                          placeholder="e.g. Lunch, Water, Snacks"
+                          value={row.description}
+                          onChange={(e) => {
+                            const updated = [...consumableRows];
+                            updated[idx] = { ...updated[idx], description: e.target.value };
+                            setConsumableRows(updated);
+                          }}
+                          className="h-9 text-sm"
+                        />
+                      </div>
+                      <div className="w-28">
+                        <Label htmlFor={`cons-amt-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Amount</Label>
+                        <Input
+                          id={`cons-amt-${idx}`}
+                          type="number"
+                          placeholder="0"
+                          step="0.01"
+                          min="0"
+                          value={row.amount}
+                          onChange={(e) => {
+                            const updated = [...consumableRows];
+                            updated[idx] = { ...updated[idx], amount: e.target.value };
+                            setConsumableRows(updated);
+                          }}
+                          className="h-9 text-sm tabular-nums"
+                        />
+                      </div>
+                      {consumableRows.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => setConsumableRows(consumableRows.filter((_, i) => i !== idx))}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-xs"
+                      onClick={() => setConsumableRows([...consumableRows, { description: '', amount: '', date: new Date().toISOString().split('T')[0] }])}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add Row
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1.5 text-xs ml-auto"
+                      disabled={isAddingConsumable || consumableRows.every((r) => !r.description || !r.amount)}
+                      onClick={async () => {
+                        const validRows = consumableRows.filter((r) => r.description.trim() && Number(r.amount) > 0);
+                        if (validRows.length === 0) {
+                          toast.error('Add at least one expense with description and amount.');
+                          return;
+                        }
+                        setIsAddingConsumable(true);
+                        try {
+                          const user = await getCurrentUser();
+                          if (!user) throw new Error('Not authenticated');
+                          for (const row of validRows) {
+                            await createConsumableExpense(user.id, {
+                              description: row.description.trim(),
+                              amount: Number(row.amount),
+                              expense_date: row.date,
+                            });
+                          }
+                          toast.success(`${validRows.length} expense${validRows.length > 1 ? 's' : ''} added.`);
+                          // Refresh
+                          const expenses = await getConsumableExpenses(currentMonth);
+                          setConsumableExpenses(expenses);
+                          setConsumableRows([{ description: '', amount: '', date: new Date().toISOString().split('T')[0] }]);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Failed to add expense.');
+                        } finally {
+                          setIsAddingConsumable(false);
+                        }
+                      }}
+                    >
+                      {isAddingConsumable ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                      Save Expense{consumableRows.filter(r => r.description.trim() && Number(r.amount) > 0).length > 1 ? 's' : ''}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Expense History */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">This Month's Expenses</CardTitle>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {consumableExpenses.length} entries
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingConsumable ? (
+                    <div className="space-y-2">
+                      {[1, 2, 3].map((i) => (
+                        <Skeleton key={i} className="h-10 w-full" />
+                      ))}
+                    </div>
+                  ) : consumableExpenses.length > 0 ? (
+                    <div className="flex flex-col gap-1 max-h-96 overflow-y-auto pr-1 scrollbar-thin">
+                      {consumableExpenses.map((expense) => (
+                        <div
+                          key={expense.id}
+                          className="flex items-center justify-between rounded-lg px-3 py-2.5 hover:bg-muted/50 transition-colors duration-150 group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 w-14">
+                              {new Date(expense.expense_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                            </span>
+                            <span className="text-sm text-foreground truncate">{expense.description}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-semibold tabular-nums text-amber-500">
+                              -PHP {formatPHP(Number(expense.amount))}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                              onClick={async () => {
+                                try {
+                                  await deleteConsumableExpense(expense.id);
+                                  setConsumableExpenses((prev) => prev.filter((e) => e.id !== expense.id));
+                                  toast.success('Expense deleted.');
+                                } catch (err) {
+                                  toast.error(err instanceof Error ? err.message : 'Failed to delete.');
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-10 text-center">
+                      <ShoppingCart className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                      <p className="text-sm text-muted-foreground">No expenses recorded this month</p>
+                      <p className="text-xs text-muted-foreground/60 mt-1">Add your first daily expense above</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </motion.div>
           </TabsContent>
         </Tabs>

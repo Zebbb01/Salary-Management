@@ -114,6 +114,7 @@ export default function SettingsPage() {
   const [salary, setSalary] = useState(0);
   const [partTimeSalary, setPartTimeSalary] = useState(0);
   const [payFrequency, setPayFrequency] = useState<PayFrequency>('semi-monthly');
+  const [consumableAllowance, setConsumableAllowance] = useState(4500);
 
   // Form fields - allocations (amounts, category names, descriptions, colors, icons)
   const [allocationAmounts, setAllocationAmounts] = useState<
@@ -175,6 +176,7 @@ export default function SettingsPage() {
         setSalary(salaryConfig.full_time_salary);
         setPartTimeSalary(salaryConfig.part_time_salary ?? 0);
         setPayFrequency(salaryConfig.pay_frequency ?? 'semi-monthly');
+        setConsumableAllowance(salaryConfig.consumable_allowance ?? 4500);
 
         const allocs = await getBudgetAllocations(salaryConfig.id);
         setAllocations(allocs);
@@ -236,6 +238,7 @@ export default function SettingsPage() {
         full_time_salary: salary,
         part_time_salary: partTimeSalary,
         pay_frequency: payFrequency,
+        consumable_allowance: consumableAllowance,
       });
       setConfig(updated);
       toast.success('Salary configuration saved.');
@@ -542,6 +545,27 @@ export default function SettingsPage() {
             </select>
           </div>
 
+          {/* Consumable Budget */}
+          <div className="space-y-2">
+            <Label htmlFor="consumable-allowance" className="font-semibold">Monthly Consumable Budget</Label>
+            <p className="text-xs text-muted-foreground">
+              Set your monthly budget for daily consumables (food, water, necessities). Track spending against this budget on the Dashboard.
+            </p>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">PHP</span>
+              <Input
+                id="consumable-allowance"
+                type="number"
+                step="100"
+                min="0"
+                value={consumableAllowance || ''}
+                onChange={(e) => setConsumableAllowance(Number(e.target.value) || 0)}
+                className="tabular-nums pl-12"
+                placeholder="4500"
+              />
+            </div>
+          </div>
+
           {/* Combined total display */}
           {partTimeSalary > 0 && (
             <div className="flex items-center justify-between rounded-lg bg-muted/50 p-3">
@@ -553,24 +577,33 @@ export default function SettingsPage() {
           )}
 
           <Separator />
-          <Button
-            onClick={handleSaveConfig}
+          <ConfirmDialog
+            trigger={
+              <Button
+                disabled={isSavingConfig || !config}
+                className="w-full"
+                size="lg"
+              >
+                {isSavingConfig ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Save Configuration
+                  </>
+                )}
+              </Button>
+            }
+            title="Save Configuration?"
+            description="This will update your salary configuration. These changes will affect all future pay period calculations."
+            confirmLabel="Save"
+            destructive={false}
+            onConfirm={handleSaveConfig}
             disabled={isSavingConfig || !config}
-            className="w-full"
-            size="lg"
-          >
-            {isSavingConfig ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                Save Configuration
-              </>
-            )}
-          </Button>
+          />
         </CardContent>
       </Card>
         </TabsContent>
@@ -921,24 +954,33 @@ export default function SettingsPage() {
 
           <Separator />
 
-          <Button
-            onClick={handleSaveAllocations}
+          <ConfirmDialog
+            trigger={
+              <Button
+                disabled={isSavingAllocations || allocations.length === 0}
+                className="w-full"
+                size="lg"
+              >
+                {isSavingAllocations ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Save Allocations
+                  </>
+                )}
+              </Button>
+            }
+            title="Save Allocations?"
+            description="This will update all budget allocation percentages and amounts. Make sure the total allocation is correct before saving."
+            confirmLabel="Save"
+            destructive={false}
+            onConfirm={handleSaveAllocations}
             disabled={isSavingAllocations || allocations.length === 0}
-            className="w-full"
-            size="lg"
-          >
-            {isSavingAllocations ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                Save Allocations
-              </>
-            )}
-          </Button>
+          />
         </CardContent>
       </Card>
 
@@ -1151,7 +1193,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <Tabs
-            defaultValue={theme ?? 'system'}
+            value={theme ?? 'system'}
             onValueChange={(val) => setTheme(val as string)}
           >
             <TabsList className="w-full h-auto p-1 sm:h-11">

@@ -9,6 +9,7 @@ export interface SalaryConfig {
   full_time_salary: number;
   part_time_salary: number;
   pay_frequency: PayFrequency;
+  consumable_allowance: number;
   created_at: string;
   updated_at: string;
 }
@@ -200,4 +201,88 @@ export interface FinancialSummary {
   totalExpensesSum: number;
   totalSpare: number;
   totalSpareSpent: number;
+  // Borrowing totals
+  totalBorrowed: number;
+  totalLent: number;
+  totalBorrowingExpensesSpent: number;
+  // Consumable totals
+  totalConsumableSpent: number;
+}
+
+// Borrowing / Lending record
+export type BorrowingType = 'borrowed' | 'lent';
+
+export interface Borrowing {
+  id: string;
+  user_id: string;
+  person_name: string;
+  type: BorrowingType;
+  amount: number;
+  description: string | null;
+  transaction_date: string;
+  is_settled: boolean;
+  settled_at: string | null;
+  pay_period_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BorrowingSummary {
+  totalBorrowed: number;   // Total I owe others (unsettled)
+  totalLent: number;       // Total others owe me (unsettled)
+  netPosition: number;     // totalLent - totalBorrowed (positive = net positive)
+  activeCount: number;
+}
+
+// Consumable expense entry
+export interface ConsumableExpense {
+  id: string;
+  user_id: string;
+  description: string;
+  amount: number;
+  expense_date: string;
+  month: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Consumable budget summary for a given month
+export interface ConsumableBudgetSummary {
+  allowance: number;
+  totalSpent: number;
+  remaining: number;
+  isOverBudget: boolean;
+  expenses: ConsumableExpense[];
+}
+
+// Monthly consumable archive record
+export interface ConsumableMonthlyRecord {
+  id: string;
+  user_id: string;
+  month: string;
+  allowance: number;
+  total_spent: number;
+  remaining: number;
+  is_over_budget: boolean;
+  expense_count: number;
+  created_at: string;
+}
+
+// Borrowing expense (spending from borrowed money)
+export interface BorrowingExpense {
+  id: string;
+  borrowing_id: string;
+  user_id: string;
+  description: string;
+  amount: number;
+  expense_date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Borrowing with its expenses
+export interface BorrowingWithExpenses extends Borrowing {
+  expenses: BorrowingExpense[];
+  totalSpent: number;
+  remainingBalance: number;
 }

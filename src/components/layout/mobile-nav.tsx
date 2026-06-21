@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Calculator,
   History,
+  HandCoins,
   Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -14,6 +15,7 @@ const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Payroll', href: '/dashboard/calculator', icon: Calculator },
   { label: 'History', href: '/dashboard/history', icon: History },
+  { label: 'Borrow', href: '/dashboard/borrowing', icon: HandCoins },
   { label: 'Settings', href: '/dashboard/settings', icon: Settings },
 ] as const;
 

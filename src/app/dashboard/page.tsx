@@ -2,6 +2,15 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Lottie from 'lottie-react';
+import { successAnimation, warningAnimation } from '@/components/ui/lottie-animations';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+} from '@/components/ui/alert-dialog';
 import {
   DollarSign,
   Receipt,
@@ -20,7 +29,17 @@ import {
   CalendarRange,
   Filter,
   Lock,
+  ChevronRight,
+  ShoppingCart,
+  HandCoins,
+  Info,
 } from 'lucide-react';
+import {
+  Tooltip as UITooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from '@/components/ui/tooltip';
 import {
   PieChart,
   Pie,
@@ -39,6 +58,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import {
   getSpareTotal,
+  getSpareTransactionsInRange,
   getCurrentUser,
   initMonthlyBills,
   upsertBillPayment,
@@ -47,6 +67,9 @@ import {
   getLatestPeriodInRange,
   getAllocationTypes,
   getPayPeriods,
+  getConsumableBudgetSummary,
+  getBorrowingSummary,
+  getSalaryConfig,
 } from '@/features/salary/services/salary.service';
 import type {
   SalaryConfig,
@@ -55,6 +78,9 @@ import type {
   BillPayment,
   FinancialSummary,
   AllocationType,
+  SpareTransaction,
+  ConsumableBudgetSummary,
+  BorrowingSummary,
 } from '@/features/salary/types/salary.types';
 import {
   computeAllocations,
@@ -140,6 +166,7 @@ interface StatCardProps {
   editable?: boolean;
   onSave?: (value: number) => void;
   subtitle?: string;
+  tooltip?: string;
 }
 
 function StatCard({
@@ -151,6 +178,7 @@ function StatCard({
   editable,
   onSave,
   subtitle,
+  tooltip,
 }: StatCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -191,7 +219,21 @@ function StatCard({
         <CardContent className="pt-5 pb-5 h-full flex flex-col justify-between">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{label}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                {label}
+                {tooltip && (
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
+                        {tooltip}
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
+              </span>
               {isEditing ? (
                 <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   <span className="text-sm text-muted-foreground">PHP</span>
@@ -245,16 +287,31 @@ interface OverviewCardProps {
   value: number;
   icon: React.ElementType;
   gradientClass: string;
+  tooltip?: string;
 }
 
-function OverviewCard({ label, value, icon: Icon, gradientClass }: OverviewCardProps) {
+function OverviewCard({ label, value, icon: Icon, gradientClass, tooltip }: OverviewCardProps) {
   return (
     <motion.div variants={staggerItem} className="h-full">
       <Card className="overflow-hidden transition-shadow duration-200 hover:shadow-md h-full">
         <CardContent className="pt-5 pb-5 h-full flex flex-col justify-between">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{label}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                {label}
+                {tooltip && (
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
+                        {tooltip}
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
+              </span>
               <span className="text-lg font-semibold text-foreground whitespace-nowrap">
                 <AnimatedNumber value={value} prefix="PHP " />
               </span>
@@ -296,20 +353,49 @@ function CustomTooltip({
   active?: boolean;
   payload?: ChartPayload[];
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !active) return;
+
+    el.style.transform = '';
+    const rect = el.getBoundingClientRect();
+    const transforms: string[] = [];
+
+    if (rect.right > window.innerWidth - 16) {
+      transforms.push('translateX(calc(-100% - 30px))');
+    } else if (rect.left < 16) {
+      transforms.push('translateX(30px)');
+    }
+
+    if (rect.bottom > window.innerHeight - 16) {
+      transforms.push('translateY(calc(-100% - 20px))');
+    } else if (rect.top < 16) {
+      transforms.push('translateY(20px)');
+    }
+
+    if (transforms.length) {
+      el.style.transform = transforms.join(' ');
+    }
+  });
+
   if (!active || !payload?.length) return null;
   const data = payload[0].payload;
 
   return (
-    <Card className="shadow-lg">
-      <CardContent className="px-3 py-2.5">
-        <p className="text-sm font-medium capitalize text-foreground">
-          {data.category}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {formatPercentage(data.percentage)} - PHP {formatPHP(data.amount)}
-        </p>
-      </CardContent>
-    </Card>
+    <div ref={ref}>
+      <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
+        <CardContent className="px-3 py-2.5">
+          <p className="text-sm font-medium capitalize text-foreground">
+            {data.category}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {formatPercentage(data.percentage)} - PHP {formatPHP(data.amount)}
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -577,6 +663,20 @@ export default function DashboardPage() {
   const [allocationTypes, setAllocationTypes] = useState<AllocationType[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'expense' | 'asset'>('all');
   const [billFilter, setBillFilter] = useState<'all' | 'expense' | 'asset'>('all');
+  const [spareTransactions, setSpareTransactions] = useState<SpareTransaction[]>([]);
+  const [consumableSummary, setConsumableSummary] = useState<ConsumableBudgetSummary | null>(null);
+  const [borrowingSummary, setBorrowingSummary] = useState<BorrowingSummary | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const [pendingToggleBill, setPendingToggleBill] = useState<BillPayment | null>(null);
+
+  // Detect mobile/touch devices to disable chart tooltips
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   // Handle trend filter change
   const handleTrendFilter = useCallback(async (limit: number) => {
@@ -661,6 +761,32 @@ export default function DashboardPage() {
       // Fetch trend data with date filter
       const trend = await getPayPeriodTrend(6, dateOpts);
       setTrendData(trend);
+
+      // Fetch spare transactions for the breakdown section
+      try {
+        const spareTxns = await getSpareTransactionsInRange(dateOpts);
+        setSpareTransactions(spareTxns);
+      } catch {
+        setSpareTransactions([]);
+      }
+
+      // Fetch consumable budget summary for current month
+      try {
+        const cMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const allowance = configData.consumable_allowance ?? 4500;
+        const consumable = await getConsumableBudgetSummary(cMonth, allowance);
+        setConsumableSummary(consumable);
+      } catch {
+        setConsumableSummary(null);
+      }
+
+      // Fetch borrowing summary
+      try {
+        const bSummary = await getBorrowingSummary();
+        setBorrowingSummary(bSummary);
+      } catch {
+        setBorrowingSummary(null);
+      }
 
       // Init and fetch monthly bills - always for the CURRENT month
       // Bills are a to-do checklist, not historical data, so they
@@ -764,7 +890,10 @@ export default function DashboardPage() {
   // Spare: use aggregated spare and spent from ALL periods in range
   const spareAmount = financialSummary?.totalSpare ?? 0;
   const totalSpareSpent = financialSummary?.totalSpareSpent ?? 0;
-  const remainingSpare = spareAmount - totalSpareSpent;
+  const totalConsumableSpent = financialSummary?.totalConsumableSpent ?? 0;
+  const totalBorrowedAmt = financialSummary?.totalBorrowed ?? 0;
+  const totalBorrowingSpent = financialSummary?.totalBorrowingExpensesSpent ?? 0;
+  const remainingSpare = spareAmount - totalSpareSpent - totalConsumableSpent - totalBorrowingSpent;
 
   // Build a map of allocation_type_id -> classification
   const typeClassificationMap = new Map(
@@ -886,32 +1015,91 @@ export default function DashboardPage() {
                     <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
                       {unpaidBills.length} bill{unpaidBills.length !== 1 ? 's' : ''} unpaid this month
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {unpaidBills.map((bill) => {
-                        const alloc = allocationMap.get(bill.allocation_id);
-                        return (
-                          <div
-                            key={bill.id}
-                            className="flex items-center gap-2 rounded-lg bg-white/60 px-2.5 py-1.5 text-xs dark:bg-white/10"
-                          >
-                            <span className="font-medium text-foreground capitalize">
-                              {alloc?.category ?? 'Bill'}
-                            </span>
-                            <span className="text-muted-foreground tabular-nums">
-                              PHP {formatPHP(alloc?.amount ?? bill.amount)}
-                            </span>
-                            <Button
-                              size="xs"
-                              variant="secondary"
-                              className="ml-0.5 h-5 px-1.5 text-[10px]"
-                              onClick={() => handleMarkBillPaid(bill)}
-                            >
-                              Mark Paid
-                            </Button>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {/* Expenses */}
+                    {(() => {
+                      const unpaidExpenses = unpaidBills.filter((b) => {
+                        const alloc = allocationMap.get(b.allocation_id);
+                        return alloc && getClassification(alloc) === 'expense';
+                      });
+                      const unpaidAssets = unpaidBills.filter((b) => {
+                        const alloc = allocationMap.get(b.allocation_id);
+                        return alloc && getClassification(alloc) === 'asset';
+                      });
+                      return (
+                        <div className="mt-2 space-y-2">
+                          {unpaidExpenses.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-orange-400/80 mb-1">Expenses</p>
+                              <div className="flex flex-wrap gap-2">
+                                {unpaidExpenses.map((bill) => {
+                                  const alloc = allocationMap.get(bill.allocation_id);
+                                  const budgeted = alloc?.amount ?? Number(bill.amount);
+                                  const paid = Number(bill.amount);
+                                  const remaining = budgeted - paid;
+                                  const isPartial = paid > 0;
+                                  return (
+                                    <div
+                                      key={bill.id}
+                                      className="flex items-center gap-2 rounded-lg bg-white/60 px-2.5 py-1.5 text-xs dark:bg-white/10"
+                                    >
+                                      <span className="font-medium text-foreground capitalize">
+                                        {alloc?.category ?? 'Bill'}
+                                      </span>
+                                      <span className="text-muted-foreground tabular-nums">
+                                        PHP {formatPHP(remaining)}{isPartial ? ' left' : ''}
+                                      </span>
+                                      <Button
+                                        size="xs"
+                                        variant="secondary"
+                                        className="ml-0.5 h-5 px-1.5 text-[10px]"
+                                        onClick={() => setPendingToggleBill(bill)}
+                                      >
+                                        Mark Paid
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {unpaidAssets.length > 0 && (
+                            <div>
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-400/80 mb-1">Savings & Assets</p>
+                              <div className="flex flex-wrap gap-2">
+                                {unpaidAssets.map((bill) => {
+                                  const alloc = allocationMap.get(bill.allocation_id);
+                                  const budgeted = alloc?.amount ?? Number(bill.amount);
+                                  const paid = Number(bill.amount);
+                                  const remaining = budgeted - paid;
+                                  const isPartial = paid > 0;
+                                  return (
+                                    <div
+                                      key={bill.id}
+                                      className="flex items-center gap-2 rounded-lg bg-white/60 px-2.5 py-1.5 text-xs dark:bg-white/10"
+                                    >
+                                      <span className="font-medium text-foreground capitalize">
+                                        {alloc?.category ?? 'Bill'}
+                                      </span>
+                                      <span className="text-muted-foreground tabular-nums">
+                                        PHP {formatPHP(remaining)}{isPartial ? ' left' : ''}
+                                      </span>
+                                      <Button
+                                        size="xs"
+                                        variant="secondary"
+                                        className="ml-0.5 h-5 px-1.5 text-[10px]"
+                                        onClick={() => setPendingToggleBill(bill)}
+                                      >
+                                        Mark Paid
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </CardContent>
@@ -919,6 +1107,320 @@ export default function DashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Financial Overview Cards */}
+      {financialSummary && (
+        <motion.div variants={staggerItem}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <OverviewCard
+              label="Gross Income"
+              value={financialSummary.grossIncome}
+              icon={TrendingUp}
+              gradientClass="bg-teal-500/10 text-teal-500"
+              tooltip="Total income before any deductions (wages + part-time + additional)"
+            />
+            <OverviewCard
+              label="Net Income"
+              value={financialSummary.netIncome}
+              icon={DollarSign}
+              gradientClass="bg-emerald-500/10 text-emerald-500"
+              tooltip="Gross Income minus Tax and Deductions"
+            />
+            <OverviewCard
+              label="Total Assets"
+              value={financialSummary.totalAssets}
+              icon={Landmark}
+              gradientClass="bg-violet-500/10 text-violet-500"
+              tooltip="Sum of all asset-type allocations (Savings, Emergency, etc.)"
+            />
+            <OverviewCard
+              label="Total Monthly Spending"
+              value={financialSummary.monthlyExpenses + totalConsumableSpent + totalBorrowingSpent}
+              icon={ArrowDownRight}
+              gradientClass="bg-rose-500/10 text-rose-500"
+              tooltip={`Budget Expenses (${formatPHP(totalExpenses)}) + Spare Spent (${formatPHP(totalSpareSpent)}) + Consumable (${formatPHP(totalConsumableSpent)}) + Borrowing Spent (${formatPHP(totalBorrowingSpent)})`}
+            />
+          </div>
+        </motion.div>
+      )}
+
+      {/* Monthly Financial Breakdown */}
+      {financialSummary && latestPeriod && (
+        <motion.div variants={staggerItem}>
+          <Card className="overflow-visible">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                <CardTitle>Monthly Financial Breakdown</CardTitle>
+              </div>
+              <CardDescription>Where your money goes this period</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Financial Flow Summary */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                {[
+                  { label: 'Income', value: financialSummary.grossIncome, color: 'text-emerald-400', bg: 'bg-emerald-500/8' },
+                  { label: 'Budget Expenses', value: totalExpenses, color: 'text-orange-400', bg: 'bg-orange-500/8' },
+                  { label: 'Savings', value: financialSummary.totalAssets, color: 'text-violet-400', bg: 'bg-violet-500/8' },
+                  { label: 'Spare Spent', value: totalSpareSpent + totalConsumableSpent + totalBorrowingSpent, color: 'text-amber-400', bg: 'bg-amber-500/8' },
+                  { label: 'Remaining', value: remainingSpare, color: remainingSpare >= 0 ? 'text-emerald-400' : 'text-orange-400', bg: remainingSpare >= 0 ? 'bg-emerald-500/8' : 'bg-orange-500/8' },
+                ].map((item, i) => (
+                  <div key={item.label} className="flex items-center gap-2">
+                    <div className={cn('flex-1 rounded-lg p-3', item.bg)}>
+                      <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
+                      <p className={cn('text-sm font-bold tabular-nums', item.color)}>
+                        PHP {formatPHP(item.value)}
+                      </p>
+                    </div>
+                    {i < 4 && (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/30 hidden lg:block" />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <Separator />
+
+              {/* 3 Column Grid */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                {/* Column 1: Budget Expenses */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-foreground">Budget Expenses</h3>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {billPayments.filter(b => b.is_paid && getClassification(allocationMap.get(b.allocation_id)!) === 'expense').length}/{allocations.filter(a => getClassification(a) === 'expense').length} paid
+                    </Badge>
+                  </div>
+                  <div className="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1 scrollbar-thin">
+                    {allocations
+                      .filter((a) => getClassification(a) === 'expense')
+                      .map((alloc) => {
+                        const bill = billPayments.find((b) => b.allocation_id === alloc.id);
+                        const isPaid = bill?.is_paid ?? false;
+                        const isPartial = !isPaid && Number(bill?.amount ?? 0) > 0;
+                        return (
+                          <button
+                            key={alloc.id}
+                            type="button"
+                            onClick={() => bill && setPendingToggleBill(bill)}
+                            className={cn(
+                              'flex items-center justify-between rounded-lg p-2.5 transition-colors duration-150 cursor-pointer text-left w-full',
+                              isPaid
+                                ? 'bg-emerald-500/5 hover:bg-emerald-500/10'
+                                : 'hover:bg-muted/50'
+                            )}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="shrink-0">
+                                {isPaid ? (
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                ) : isPartial ? (
+                                  <Circle className="h-4 w-4 text-amber-400" strokeWidth={2.5} />
+                                ) : (
+                                  <Circle className="h-4 w-4 text-muted-foreground/40" />
+                                )}
+                              </div>
+                              <div className="flex flex-col min-w-0">
+                                <span className={cn(
+                                  'text-xs font-medium capitalize truncate',
+                                  isPaid ? 'text-muted-foreground line-through' : 'text-foreground'
+                                )}>
+                                  {alloc.category}
+                                </span>
+                                {isPaid && bill?.paid_at && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    Paid {new Date(bill.paid_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                                  </span>
+                                )}
+                                {isPartial && (
+                                  <span className="text-[10px] text-amber-500">
+                                    Paid {formatPHP(Number(bill!.amount))} of {formatPHP(alloc.amount)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <span className={cn(
+                              'text-xs font-semibold tabular-nums shrink-0',
+                              isPaid ? 'text-muted-foreground' : 'text-foreground'
+                            )}>
+                              PHP {formatPHP(alloc.amount)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] text-muted-foreground">Total Budget Expenses</span>
+                    <span className="text-xs font-bold tabular-nums text-orange-400">
+                      PHP {formatPHP(totalExpenses)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Column 2: Savings & Assets */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-foreground">Savings & Assets</h3>
+                    <Badge variant="secondary" className="text-[10px] bg-violet-500/10 text-violet-500">
+                      {allocations.filter(a => getClassification(a) === 'asset').length} items
+                    </Badge>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {allocations
+                      .filter((a) => getClassification(a) === 'asset')
+                      .map((alloc) => (
+                        <div
+                          key={alloc.id}
+                          className="flex items-center justify-between rounded-lg p-2.5 hover:bg-muted/50 transition-colors duration-150"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/10">
+                              <Landmark className="h-3.5 w-3.5 text-violet-500" />
+                            </div>
+                            <span className="text-xs font-medium capitalize text-foreground">{alloc.category}</span>
+                          </div>
+                          <span className="text-xs font-semibold tabular-nums text-violet-500">
+                            PHP {formatPHP(alloc.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    {allocations.filter((a) => getClassification(a) === 'asset').length === 0 && (
+                      <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
+                        No asset allocations configured
+                      </div>
+                    )}
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] text-muted-foreground">Total Savings</span>
+                    <span className="text-xs font-bold tabular-nums text-violet-500">
+                      PHP {formatPHP(financialSummary.totalAssets)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Column 3: Consumable Budget + Borrowing */}
+                <div className="space-y-5">
+                  {/* Consumable Budget */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-foreground">Consumable Budget</h3>
+                      <Badge variant="secondary" className="text-[10px] bg-amber-500/10 text-amber-500">
+                        {consumableSummary?.expenses.length ?? 0} expenses
+                      </Badge>
+                    </div>
+                    {consumableSummary ? (
+                      <>
+                        {/* Progress Bar */}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                            <span>{consumableSummary.allowance > 0 ? `${Math.min(Math.round((consumableSummary.totalSpent / consumableSummary.allowance) * 100), 100)}%` : '0%'} used</span>
+                            <span className={cn('font-medium', consumableSummary.isOverBudget ? 'text-rose-500' : 'text-emerald-500')}>
+                              {consumableSummary.isOverBudget ? 'Over budget' : `${formatPHP(consumableSummary.remaining)} left`}
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className={cn(
+                                'h-full rounded-full transition-all duration-500',
+                                consumableSummary.isOverBudget ? 'bg-rose-500' : 
+                                  (consumableSummary.totalSpent / consumableSummary.allowance) >= 0.8 ? 'bg-amber-500' : 'bg-emerald-500'
+                              )}
+                              style={{ width: `${Math.min((consumableSummary.totalSpent / Math.max(consumableSummary.allowance, 1)) * 100, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        {/* Recent expenses */}
+                        <div className="flex flex-col gap-0.5 max-h-36 overflow-y-auto pr-1 scrollbar-thin">
+                          {consumableSummary.expenses.slice(0, 5).map((exp) => (
+                            <div
+                              key={exp.id}
+                              className="flex items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-muted/50 transition-colors duration-150"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 w-12">
+                                  {new Date(exp.expense_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                                </span>
+                                <span className="text-xs text-foreground truncate">{exp.description}</span>
+                              </div>
+                              <span className="text-xs font-semibold tabular-nums text-amber-400/80 shrink-0">
+                                -PHP {formatPHP(Number(exp.amount))}
+                              </span>
+                            </div>
+                          ))}
+                          {consumableSummary.expenses.length === 0 && (
+                            <div className="flex items-center justify-center py-4 text-xs text-muted-foreground">
+                              No consumable expenses this month
+                            </div>
+                          )}
+                        </div>
+                        <Separator />
+                        <div className="space-y-1 px-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-muted-foreground">Allowance</span>
+                            <span className="text-xs tabular-nums text-foreground">PHP {formatPHP(consumableSummary.allowance)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-muted-foreground">Total Spent</span>
+                            <span className="text-xs tabular-nums text-amber-400/80">-PHP {formatPHP(consumableSummary.totalSpent)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-foreground">Remaining</span>
+                            <span className={cn('text-xs font-bold tabular-nums', consumableSummary.remaining >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                              PHP {formatPHP(consumableSummary.remaining)}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
+                        Set your consumable budget in Settings
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Borrowing Summary */}
+                  {borrowingSummary && borrowingSummary.activeCount > 0 && (
+                    <>
+                      <Separator />
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-foreground">Active Borrowings</h3>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {borrowingSummary.activeCount} active
+                          </Badge>
+                        </div>
+                        <div className="space-y-1.5">
+                          {borrowingSummary.totalBorrowed > 0 && (
+                            <div className="flex items-center justify-between rounded-lg bg-rose-500/5 px-2.5 py-2">
+                              <span className="text-xs text-muted-foreground">I Owe Others</span>
+                              <span className="text-xs font-semibold tabular-nums text-rose-500">PHP {formatPHP(borrowingSummary.totalBorrowed)}</span>
+                            </div>
+                          )}
+                          {borrowingSummary.totalLent > 0 && (
+                            <div className="flex items-center justify-between rounded-lg bg-emerald-500/5 px-2.5 py-2">
+                              <span className="text-xs text-muted-foreground">Owed To Me</span>
+                              <span className="text-xs font-semibold tabular-nums text-emerald-500">PHP {formatPHP(borrowingSummary.totalLent)}</span>
+                            </div>
+                          )}
+                        </div>
+                        <Link
+                          href="/dashboard/borrowing"
+                          className="flex items-center justify-center gap-1.5 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                        >
+                          <HandCoins className="h-3.5 w-3.5" />
+                          View All Borrowings
+                        </Link>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Quick Stats Row */}
       <div
@@ -930,9 +1432,11 @@ export default function DashboardPage() {
         <StatCard
           label="Full-time Salary"
           value={fullTimeSalary}
-          icon={DollarSign}
-          colorClass="bg-emerald-500/10 text-emerald-500"
+          icon={Briefcase}
+          colorClass="bg-indigo-500/10 text-indigo-500"
           index={0}
+          subtitle={hasPartTime ? undefined : 'Primary income'}
+          tooltip="Sum of first and second wage"
         />
         {hasPartTime && (
           <StatCard
@@ -941,6 +1445,7 @@ export default function DashboardPage() {
             icon={Briefcase}
             colorClass="bg-sky-500/10 text-sky-500"
             index={1}
+            tooltip="Income from secondary source"
           />
         )}
         {hasPartTime && (
@@ -959,13 +1464,15 @@ export default function DashboardPage() {
           icon={Receipt}
           colorClass="bg-rose-500/10 text-rose-500"
           index={hasPartTime ? 3 : 1}
+          tooltip="Tax deducted from wages"
         />
         <StatCard
           label="Total Expenses"
-          value={totalExpenses}
+          value={totalExpenses + totalConsumableSpent + totalBorrowingSpent}
           icon={ArrowDownRight}
           colorClass="bg-amber-500/10 text-amber-500"
           index={hasPartTime ? 4 : 2}
+          tooltip={`Budget Expenses (${formatPHP(totalExpenses)}) + Consumable (${formatPHP(totalConsumableSpent)}) + Borrowing Spent (${formatPHP(totalBorrowingSpent)})`}
         />
         {!hasPartTime && (
           <StatCard
@@ -974,7 +1481,7 @@ export default function DashboardPage() {
             icon={Sparkles}
             colorClass="bg-purple-500/10 text-purple-500"
             index={3}
-            subtitle={totalSpareSpent > 0 ? `PHP ${formatPHP(totalSpareSpent)} spent from spare` : undefined}
+            subtitle={(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent) > 0 ? `PHP ${formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare` : undefined}
           />
         )}
       </div>
@@ -992,9 +1499,9 @@ export default function DashboardPage() {
             <span className="text-3xl font-semibold tabular-nums font-display text-white sm:text-4xl">
               PHP {formatPHP(remainingSpare)}
             </span>
-            {totalSpareSpent > 0 && (
+            {(totalSpareSpent > 0 || totalConsumableSpent > 0 || totalBorrowingSpent > 0) && (
               <span className="text-xs text-white/60">
-                PHP {formatPHP(totalSpareSpent)} spent from spare
+                PHP {formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare
               </span>
             )}
           </div>
@@ -1004,41 +1511,39 @@ export default function DashboardPage() {
         </div>
       </motion.div>
 
-      {/* Financial Overview Cards */}
-      {financialSummary && (
+      {/* Active Borrowing Impact on Spare */}
+      {borrowingSummary && borrowingSummary.activeCount > 0 && (
         <motion.div variants={staggerItem}>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <OverviewCard
-              label="Gross Income"
-              value={financialSummary.grossIncome}
-              icon={TrendingUp}
-              gradientClass="bg-teal-500/10 text-teal-500"
-            />
-            <OverviewCard
-              label="Net Income"
-              value={financialSummary.netIncome}
-              icon={DollarSign}
-              gradientClass="bg-emerald-500/10 text-emerald-500"
-            />
-            <OverviewCard
-              label="Total Assets"
-              value={financialSummary.totalAssets}
-              icon={Landmark}
-              gradientClass="bg-violet-500/10 text-violet-500"
-            />
-            <OverviewCard
-              label="Monthly Expenses"
-              value={financialSummary.monthlyExpenses}
-              icon={ArrowDownRight}
-              gradientClass="bg-rose-500/10 text-rose-500"
-            />
-          </div>
+          <Card className="border-rose-500/20 bg-gradient-to-r from-rose-500/5 to-amber-500/5">
+            <CardContent className="py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/10">
+                  <HandCoins className="h-4.5 w-4.5 text-rose-500" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-foreground">Active Borrowings</p>
+                  <p className="text-xs text-muted-foreground">
+                    You owe <span className="text-rose-500 font-medium">PHP {formatPHP(borrowingSummary.totalBorrowed)}</span>
+                    {borrowingSummary.totalLent > 0 && (
+                      <> and are owed <span className="text-emerald-500 font-medium">PHP {formatPHP(borrowingSummary.totalLent)}</span></>
+                    )}
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard/borrowing"
+                  className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-8 text-xs')}
+                >
+                  View
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
         </motion.div>
       )}
 
       {/* Income vs Expenses Trend Chart */}
       <motion.div variants={staggerItem}>
-        <Card>
+        <Card className="overflow-visible">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1113,7 +1618,7 @@ export default function DashboardPage() {
                       allowEscapeViewBox={{ x: true, y: true }}
                       offset={15}
                       isAnimationActive={false}
-                      cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
+                      cursor={isMobile ? false : { stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
                       wrapperStyle={{ outline: 'none', zIndex: 50 }}
                     />
                     <Legend
@@ -1173,7 +1678,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Budget Donut Chart */}
         <motion.div variants={staggerItem} data-onboarding="budget-chart">
-          <Card className="h-full">
+          <Card className="h-full overflow-visible">
             <CardHeader>
               <CardTitle>Budget Allocation</CardTitle>
               <CardDescription>
@@ -1207,6 +1712,7 @@ export default function DashboardPage() {
                         allowEscapeViewBox={{ x: true, y: true }}
                         offset={15}
                         isAnimationActive={false}
+                        wrapperStyle={{ outline: 'none', zIndex: 50 }}
                       />
                       <CenterLabel salary={totalSalary} />
                     </PieChart>
@@ -1337,159 +1843,65 @@ export default function DashboardPage() {
         </motion.div>
       )}
 
-      {/* Monthly Bills Checklist */}
-      <motion.div variants={staggerItem} data-onboarding="monthly-bills">
-        {billPayments.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Calendar className="h-4 w-4 text-muted-foreground" />
-                    <CardTitle>Monthly Bills</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Track your bill payments for {activeBillMonth}
-                  </CardDescription>
-                </div>
-                <div className="flex items-center gap-1">
-                  {(['all', 'expense', 'asset'] as const).map((filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setBillFilter(filter)}
-                      className={cn(
-                        'whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200 cursor-pointer capitalize',
-                        billFilter === filter
-                          ? 'bg-primary text-primary-foreground shadow-sm'
-                          : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
-                      )}
-                    >
-                      {filter === 'all' ? 'All' : filter === 'expense' ? 'Expenses' : 'Assets'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col gap-1 max-h-96 overflow-y-auto pr-1 scrollbar-thin">
-                {filteredBillPayments.map((bill, index) => {
-                  const alloc = allocationMap.get(bill.allocation_id);
-                  return (
-                    <motion.div
-                      key={bill.id}
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{
-                        delay: 0.1 + index * 0.04,
-                        duration: 0.3,
-                        ease: 'easeOut',
-                      }}
-                      className={cn(
-                        'flex items-center justify-between rounded-lg p-3 transition-colors duration-150',
-                        bill.is_paid
-                          ? 'bg-emerald-500/5 hover:bg-emerald-500/10'
-                          : 'hover:bg-muted/50'
-                      )}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="shrink-0">
-                          {bill.is_paid ? (
-                            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                          ) : Number(bill.amount) > 0 ? (
-                            <Circle className="h-5 w-5 text-amber-400" strokeWidth={2.5} />
-                          ) : (
-                            <Circle className="h-5 w-5 text-muted-foreground/40" />
-                          )}
-                        </div>
-                        <div className="flex min-w-0 flex-col">
-                          <span
-                            className={cn(
-                              'text-sm font-medium capitalize',
-                              bill.is_paid
-                                ? 'text-muted-foreground line-through'
-                                : 'text-foreground'
-                            )}
-                          >
-                            {alloc?.category ?? 'Bill'}
-                          </span>
-                          {bill.is_paid && bill.paid_at ? (
-                            <span className="text-[11px] text-muted-foreground">
-                              Paid {new Date(bill.paid_at).toLocaleDateString('en-PH', {
-                                month: 'short',
-                                day: 'numeric',
-                              })}
-                            </span>
-                          ) : Number(bill.amount) > 0 && !bill.is_paid ? (
-                            <span className="text-[11px] text-amber-500">
-                              Paid {formatPHP(Number(bill.amount))} of {formatPHP(alloc?.amount ?? 0)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span
-                          className={cn(
-                            'text-sm font-semibold tabular-nums',
-                            bill.is_paid ? 'text-muted-foreground' : 'text-foreground'
-                          )}
-                        >
-                          PHP {formatPHP(alloc?.amount ?? bill.amount)}
-                        </span>
-                        {/* Progress bar for partial payments */}
-                        {!bill.is_paid && Number(bill.amount) > 0 && alloc && (
-                          <div className="w-20 h-1 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-amber-500 transition-all duration-300"
-                              style={{ width: `${Math.min(100, (Number(bill.amount) / alloc.amount) * 100)}%` }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-              <Separator className="my-3" />
-              <div className="flex items-center justify-between px-3">
-                <span className="text-xs text-muted-foreground">
-                  {filteredPaidCount} of {filteredBillPayments.length} paid{filteredPartialCount > 0 ? ` · ${filteredPartialCount} partial` : ''}
-                </span>
-                <Badge
-                  variant={filteredPaidCount === filteredBillPayments.length ? 'default' : 'secondary'}
-                  className={cn(
-                    filteredPaidCount === filteredBillPayments.length &&
-                      'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                  )}
-                >
-                  {filteredPaidCount === filteredBillPayments.length ? 'All Paid' : `${filteredBillPayments.length - filteredPaidCount} remaining`}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="py-12">
-              <div className="flex flex-col items-center justify-center text-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                  <Receipt className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">No bills set up yet</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Add budget allocations in Settings to start tracking your monthly bills.
-                  </p>
-                </div>
-                <Link href="/dashboard/settings">
-                  <Button variant="outline" size="sm" className="mt-2">
-                    <Settings className="h-3.5 w-3.5 mr-1.5" />
-                    Go to Settings
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </motion.div>
+
+
+      {/* Confirmation Dialog for bill toggle/mark paid */}
+      <AlertDialog
+        open={!!pendingToggleBill}
+        onOpenChange={(open) => { if (!open) setPendingToggleBill(null); }}
+      >
+        <AlertDialogContent size="sm">
+          <div className="flex flex-col items-center text-center pt-2">
+            {/* Animated Lottie icon */}
+            <div className="h-16 w-16">
+              {pendingToggleBill && (
+                <Lottie
+                  animationData={pendingToggleBill.is_paid ? warningAnimation : successAnimation}
+                  loop={false}
+                  autoplay
+                  className="h-16 w-16"
+                />
+              )}
+            </div>
+            <h2 className="mt-3 text-base font-semibold text-foreground">
+              {pendingToggleBill?.is_paid ? 'Mark as Unpaid?' : 'Mark as Paid?'}
+            </h2>
+            <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed max-w-[260px]">
+              {(() => {
+                if (!pendingToggleBill) return '';
+                const alloc = allocationMap.get(pendingToggleBill.allocation_id);
+                const name = alloc?.category ?? 'This bill';
+                if (pendingToggleBill.is_paid) {
+                  return `This will mark "${name}" as unpaid and reset the payment record.`;
+                }
+                return `This will mark "${name}" as fully paid for this month.`;
+              })()}
+            </p>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!pendingToggleBill) return;
+                if (pendingToggleBill.is_paid) {
+                  await handleToggleBill(pendingToggleBill);
+                } else {
+                  await handleMarkBillPaid(pendingToggleBill);
+                }
+                setPendingToggleBill(null);
+              }}
+              className={cn(
+                pendingToggleBill?.is_paid
+                  ? 'bg-amber-600 text-white shadow-sm hover:bg-amber-500'
+                  : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-500'
+              )}
+            >
+              {pendingToggleBill?.is_paid ? 'Mark Unpaid' : 'Mark Paid'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </motion.div>
   );
 }

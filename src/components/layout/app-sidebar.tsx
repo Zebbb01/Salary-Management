@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Calculator,
   History,
+  HandCoins,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Payroll', href: '/dashboard/calculator', icon: Calculator },
   { label: 'History', href: '/dashboard/history', icon: History },
+  { label: 'Borrowing', href: '/dashboard/borrowing', icon: HandCoins },
   { label: 'Settings', href: '/dashboard/settings', icon: Settings },
 ] as const;
 
