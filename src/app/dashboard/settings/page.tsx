@@ -20,6 +20,7 @@ import {
   Plus,
   Tag,
   ChevronDown,
+  Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -65,6 +66,12 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Tooltip as UITooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
 
 // Modern Premium Color Palette for Categories
 const PALETTE_COLORS = [
@@ -462,18 +469,18 @@ export default function SettingsPage() {
 
       <Tabs defaultValue="salary" className="w-full">
         <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-          <TabsList className="grid w-full grid-cols-3 h-auto p-1 sm:h-11">
-            <TabsTrigger value="salary" className="h-9 gap-2 px-4 text-sm">
+          <TabsList className="flex w-full items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
+            <TabsTrigger value="salary" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <Wallet className="h-4 w-4" />
-              Salary
+              <span className="tab-label-reveal">Salary</span>
             </TabsTrigger>
-            <TabsTrigger value="budget" className="h-9 gap-2 px-4 text-sm" data-onboarding="budget-tab">
+            <TabsTrigger value="budget" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap" data-onboarding="budget-tab">
               <PieChart className="h-4 w-4" />
-              Budget
+              <span className="tab-label-reveal">Budget</span>
             </TabsTrigger>
-            <TabsTrigger value="general" className="h-9 gap-2 px-4 text-sm">
+            <TabsTrigger value="general" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <Settings className="h-4 w-4" />
-              General
+              <span className="tab-label-reveal">General</span>
             </TabsTrigger>
           </TabsList>
         </div>
@@ -489,7 +496,18 @@ export default function SettingsPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Wallet className="h-4 w-4 text-primary" />
             </div>
-            <CardTitle>Salary Configuration</CardTitle>
+            <CardTitle className="flex items-center gap-2">Salary Configuration
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Configure base salary and automated deductions
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
           </div>
           <CardDescription>
             Set your name and salary details for calculations
@@ -619,7 +637,18 @@ export default function SettingsPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <PieChart className="h-4 w-4 text-primary" />
             </div>
-            <CardTitle>Budget Allocations</CardTitle>
+            <CardTitle className="flex items-center gap-2">Budget Allocations
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Allocate percentages or fixed amounts for categories
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
           </div>
           <CardDescription>
             Set how much you allocate for each category (in PHP)
@@ -993,7 +1022,18 @@ export default function SettingsPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Tag className="h-4 w-4 text-primary" />
             </div>
-            <CardTitle>Budget Types</CardTitle>
+            <CardTitle className="flex items-center gap-2">Budget Types
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Manage custom budget categories
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
           </div>
           <CardDescription>
             Define types to classify your budget allocations (e.g., Expense, Savings)
@@ -1185,7 +1225,18 @@ export default function SettingsPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Sun className="h-4 w-4 text-primary" />
             </div>
-            <CardTitle>Appearance</CardTitle>
+            <CardTitle className="flex items-center gap-2">Appearance
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Customize the look and feel of the app
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
           </div>
           <CardDescription>
             Choose your preferred color theme
@@ -1223,7 +1274,18 @@ export default function SettingsPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Mail className="h-4 w-4 text-primary" />
             </div>
-            <CardTitle>Account</CardTitle>
+            <CardTitle className="flex items-center gap-2">Account
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Manage your user account settings
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
           </div>
           <CardDescription>
             Manage your account settings

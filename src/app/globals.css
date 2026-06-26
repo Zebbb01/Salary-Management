@@ -414,3 +414,38 @@ h1, h2, h3, h4, h5, h6 {
 .recharts-responsive-container {
   min-width: 0;
 }
+
+/* Scrollbar hide utility classes */
+.scrollbar-none,
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-none::-webkit-scrollbar,
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}
+
+/* Responsive active tab label reveal animation */
+@media (max-width: 639px) {
+  .tab-label-reveal {
+    display: inline-block;
+    max-width: 0;
+    opacity: 0;
+    margin-left: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+                margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  [data-active] .tab-label-reveal,
+  [data-state="active"] .tab-label-reveal,
+  [aria-selected="true"] .tab-label-reveal {
+    max-width: 150px;
+    opacity: 1;
+    margin-left: 0.375rem; /* ml-1.5 */
+  }
+}

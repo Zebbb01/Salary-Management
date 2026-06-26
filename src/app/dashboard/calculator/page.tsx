@@ -25,6 +25,12 @@ import {
   Lock,
   ShoppingCart,
 } from 'lucide-react';
+import {
+  Tooltip as UITooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { payPeriodSchema, type PayPeriodFormData } from '@/features/salary/validations/schemas';
@@ -39,6 +45,7 @@ import {
   getCurrentUser,
   getPayPeriods,
   getSpareTransactions,
+  getSpareTransactionsByUser,
   createSpareTransaction,
   deleteSpareTransaction,
   getSpareTotal,
@@ -48,6 +55,7 @@ import {
   getBillPayments,
   getAllocationTypes,
   getConsumableExpenses,
+  getConsumableExpensesByUser,
   createConsumableExpense,
   deleteConsumableExpense,
 } from '@/features/salary/services/salary.service';
@@ -85,12 +93,14 @@ function SectionCard({
   children,
   summary,
   defaultOpen = true,
+  tooltip,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
   summary?: string;
   defaultOpen?: boolean;
+  tooltip?: string;
 }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
@@ -102,15 +112,31 @@ function SectionCard({
           onClick={() => setIsOpen((o) => !o)}
         >
           <CardTitle className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Icon className="h-4 w-4 text-primary" />
-            </div>
-            <span className="flex-1">{title}</span>
-            {!isOpen && summary && (
-              <span className="text-xs font-normal text-muted-foreground truncate max-w-[50%] hidden sm:inline">
-                {summary}
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <Icon className="h-4 w-4 text-primary" />
+              </div>
+              <span className="flex-1 flex items-center gap-2">
+                {title}
+                {tooltip && (
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
+                        {tooltip}
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
               </span>
-            )}
+              {!isOpen && summary && (
+                <span className="text-xs font-normal text-muted-foreground truncate max-w-[50%] hidden sm:inline">
+                  {summary}
+                </span>
+              )}
+            </CardTitle>
+          <div className="absolute right-6 top-6">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setIsOpen((o) => !o); }}
@@ -123,7 +149,7 @@ function SectionCard({
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               )}
             </button>
-          </CardTitle>
+          </div>
         </CardHeader>
         <AnimatePresence initial={false}>
           {isOpen && (
@@ -210,6 +236,10 @@ export default function CalculatorPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  // Autocomplete suggestions
+  const [consumableSuggestions, setConsumableSuggestions] = useState<{ description: string; amount: number }[]>([]);
+  const [spareSuggestions, setSpareSuggestions] = useState<{ description: string; amount: number }[]>([]);
+
   const defaultValues: PayPeriodFormData = {
     period_label: generatePeriodLabel(new Date(), payFrequency),
     first_wage: 0,
@@ -252,6 +282,54 @@ export default function CalculatorPage() {
     defaultValues,
     mode: 'onChange',
   });
+
+  // ---------------------------------------------------------------------------
+  // Load autocomplete suggestions for consumable expenses and spare transactions
+  // ---------------------------------------------------------------------------
+  const loadAutocompleteSuggestions = useCallback(async () => {
+    try {
+      const [consumableData, spareData] = await Promise.all([
+        getConsumableExpensesByUser(100),
+        getSpareTransactionsByUser(100),
+      ]);
+
+      // Deduplicate consumable suggestions (keep the most recent one's amount)
+      const consMap = new Map<string, number>();
+      const consSeen = new Set<string>();
+      for (const row of consumableData) {
+        const desc = row.description.trim();
+        const descLower = desc.toLowerCase();
+        if (!consSeen.has(descLower)) {
+          consSeen.add(descLower);
+          consMap.set(desc, Number(row.amount));
+        }
+      }
+      setConsumableSuggestions(
+        Array.from(consMap.entries()).map(([description, amount]) => ({ description, amount }))
+      );
+
+      // Deduplicate spare suggestions (keep the most recent one's amount)
+      const spareMap = new Map<string, number>();
+      const spareSeen = new Set<string>();
+      for (const row of spareData) {
+        const desc = row.description.trim();
+        const descLower = desc.toLowerCase();
+        if (!spareSeen.has(descLower)) {
+          spareSeen.add(descLower);
+          spareMap.set(desc, Number(row.amount));
+        }
+      }
+      setSpareSuggestions(
+        Array.from(spareMap.entries()).map(([description, amount]) => ({ description, amount }))
+      );
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAutocompleteSuggestions();
+  }, [loadAutocompleteSuggestions]);
 
   // ---------------------------------------------------------------------------
   // Load last saved pay period on mount to pre-fill the form
@@ -474,6 +552,7 @@ export default function CalculatorPage() {
       toast.success(`${validRows.length} expense${validRows.length > 1 ? 's' : ''} added.`);
       setSpareRows([{ description: '', amount: '', date: new Date().toISOString().split('T')[0] }]);
       await loadSpareData(selectedPeriodId);
+      await loadAutocompleteSuggestions();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add expenses.';
       toast.error(message);
@@ -496,7 +575,21 @@ export default function CalculatorPage() {
 
   function updateSpareRow(index: number, field: 'description' | 'amount' | 'date', value: string) {
     setSpareRows((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+      prev.map((row, i) => {
+        if (i === index) {
+          const updatedRow = { ...row, [field]: value };
+          if (field === 'description') {
+            const match = spareSuggestions.find(
+              (s) => s.description.toLowerCase() === value.trim().toLowerCase()
+            );
+            if (match) {
+              updatedRow.amount = String(match.amount);
+            }
+          }
+          return updatedRow;
+        }
+        return row;
+      })
     );
   }
 
@@ -750,18 +843,18 @@ export default function CalculatorPage() {
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs defaultValue="calculator">
           <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-            <TabsList className="w-full h-auto p-1 sm:w-auto sm:h-11">
-              <TabsTrigger value="calculator" className="h-9 gap-2 px-4 text-sm sm:px-5">
+            <TabsList className="flex w-full items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
+              <TabsTrigger value="calculator" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
                 <Calculator className="h-4 w-4" />
-                Payroll
+                <span className="tab-label-reveal">Payroll</span>
               </TabsTrigger>
-              <TabsTrigger value="spare-tracker" className="h-9 gap-2 px-4 text-sm sm:px-5">
+              <TabsTrigger value="spare-tracker" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
                 <Wallet className="h-4 w-4" />
-                Spare Tracker
+                <span className="tab-label-reveal">Spare Tracker</span>
               </TabsTrigger>
-              <TabsTrigger value="consumable" className="h-9 gap-2 px-4 text-sm sm:px-5">
+              <TabsTrigger value="consumable" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
                 <ShoppingCart className="h-4 w-4" />
-                Consumable
+                <span className="tab-label-reveal">Consumable</span>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -780,7 +873,7 @@ export default function CalculatorPage() {
               animate="animate"
             >
               {/* ----- Income Section ----- */}
-              <SectionCard title="Income" icon={DollarSign} summary={`P ${formatPHP(calculation.totalIncome)}`}>
+              <SectionCard tooltip="Total income from all sources before deductions" title="Income" icon={DollarSign} summary={`P ${formatPHP(calculation.totalIncome)}`}>
                 <div className="space-y-4">
                   {/* First Wage - with toggle */}
                   <div className="space-y-1.5">
@@ -1023,7 +1116,7 @@ export default function CalculatorPage() {
               </SectionCard>
 
               {/* ----- Tax Section ----- */}
-              <SectionCard title="Tax" icon={Receipt} summary={`P ${formatPHP(calculation.totalTax)}`}>
+              <SectionCard tooltip="Tax calculation based on current rates" title="Tax" icon={Receipt} summary={`P ${formatPHP(calculation.totalTax)}`}>
                 <div className="space-y-5">
                   {/* Wage Tax */}
                   <div className="space-y-3">
@@ -1135,7 +1228,7 @@ export default function CalculatorPage() {
               </SectionCard>
 
               {/* ----- Budget Allocations Section ----- */}
-              <SectionCard title="Budget Allocations" icon={CalendarDays} summary={`P ${formatPHP(calculation.totalAllocated)}`}>
+              <SectionCard tooltip="Planned budget distribution for expenses and savings" title="Budget Allocations" icon={CalendarDays} summary={`P ${formatPHP(calculation.totalAllocated)}`}>
                 <div className="space-y-3">
                   {(watchedValues.allocation_amounts || []).length === 0 ? (
                     <div className="py-6 text-center">
@@ -1418,7 +1511,7 @@ export default function CalculatorPage() {
             {/* ============================================================ */}
             {/* RIGHT PANEL - Live Calculation Summary                        */}
             {/* ============================================================ */}
-            <div className="lg:sticky lg:top-32 lg:w-3/5 self-start">
+            <div className="w-full lg:sticky lg:top-32 lg:w-3/5 lg:self-start">
                 <motion.div
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1426,7 +1519,7 @@ export default function CalculatorPage() {
                 >
                   <Card>
                     <CardHeader className="pb-3">
-                      <CardTitle>Calculation Summary</CardTitle>
+                      <CardTitle className="flex items-center gap-2">Calculation Summary <TooltipProvider><UITooltip><TooltipTrigger className="flex"><Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" /></TooltipTrigger><TooltipContent side="top">A breakdown of income, taxes, deductions, and allocations.</TooltipContent></UITooltip></TooltipProvider></CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -1694,8 +1787,8 @@ export default function CalculatorPage() {
                             transition={{ duration: 0.2 }}
                           >
                             {/* Desktop: single row | Mobile: stacked grid */}
-                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_100px_140px_36px] sm:items-end">
-                              <div>
+                            <div className="flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_100px_140px_36px] sm:items-end">
+                              <div className="w-full">
                                 {index === 0 && (
                                   <Label className="mb-1.5 text-muted-foreground">Description</Label>
                                 )}
@@ -1704,13 +1797,14 @@ export default function CalculatorPage() {
                                   placeholder="Lunch, grab, shopping..."
                                   value={row.description}
                                   onChange={(e) => updateSpareRow(index, 'description', e.target.value)}
-                                  className="h-10 sm:h-9"
+                                  className="h-10 sm:h-9 text-base sm:text-sm"
+                                  list="spare-suggestions"
                                 />
                               </div>
-                              <div className="grid grid-cols-2 gap-2 sm:contents">
+                              <div className="grid grid-cols-[1fr_1.2fr_40px] gap-2 items-end sm:contents">
                                 <div>
                                   {index === 0 && (
-                                    <Label className="mb-1.5 text-muted-foreground sm:block hidden">Amount</Label>
+                                    <Label className="mb-1.5 text-xs text-muted-foreground block">Amount</Label>
                                   )}
                                   <Input
                                     type="number"
@@ -1719,32 +1813,32 @@ export default function CalculatorPage() {
                                     placeholder="0.00"
                                     value={row.amount}
                                     onChange={(e) => updateSpareRow(index, 'amount', e.target.value)}
-                                    className="h-10 tabular-nums sm:h-9"
+                                    className="h-10 tabular-nums sm:h-9 text-base sm:text-sm"
                                   />
                                 </div>
                                 <div>
                                   {index === 0 && (
-                                    <Label className="mb-1.5 text-muted-foreground sm:block hidden">Date</Label>
+                                    <Label className="mb-1.5 text-xs text-muted-foreground block">Date</Label>
                                   )}
                                   <Input
                                     type="date"
                                     value={row.date}
                                     onChange={(e) => updateSpareRow(index, 'date', e.target.value)}
-                                    className="h-10 sm:h-9"
+                                    className="h-10 sm:h-9 text-base sm:text-sm"
                                   />
                                 </div>
-                              </div>
-                              <div className="flex sm:block">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-10 w-10 shrink-0 text-muted-foreground hover:text-destructive sm:h-9 sm:w-9 ml-auto"
-                                  onClick={() => removeSpareRow(index)}
-                                  disabled={spareRows.length <= 1}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                <div className="flex items-center justify-center">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-10 w-10 shrink-0 text-muted-foreground hover:text-destructive sm:h-9 sm:w-9"
+                                    onClick={() => removeSpareRow(index)}
+                                    disabled={spareRows.length <= 1}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                             {/* Separator between rows on mobile */}
@@ -1753,6 +1847,13 @@ export default function CalculatorPage() {
                             )}
                           </motion.div>
                         ))}
+                        <datalist id="spare-suggestions">
+                          {spareSuggestions.map((s) => (
+                            <option key={s.description} value={s.description}>
+                              P {formatPHP(s.amount)}
+                            </option>
+                          ))}
+                        </datalist>
                       </div>
                       <div className="flex gap-2">
                         <Button
@@ -1865,10 +1966,10 @@ export default function CalculatorPage() {
               </div>
 
               {/* Right: Summary */}
-              <div className="lg:sticky lg:top-32 lg:w-2/5 self-start">
+              <div className="w-full lg:sticky lg:top-32 lg:w-2/5 lg:self-start">
                   <Card>
                     <CardHeader>
-                      <CardTitle>Spare Summary</CardTitle>
+                      <CardTitle className="flex items-center gap-2">Spare Summary <TooltipProvider><UITooltip><TooltipTrigger className="flex"><Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" /></TooltipTrigger><TooltipContent side="top">Remaining unallocated funds tracking over time.</TooltipContent></UITooltip></TooltipProvider></CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
@@ -1937,7 +2038,7 @@ export default function CalculatorPage() {
                       <ShoppingCart className="h-4 w-4 text-amber-500" />
                     </div>
                     <div>
-                      <CardTitle>Consumable Budget</CardTitle>
+                      <CardTitle className="flex items-center gap-2">Consumable Budget <TooltipProvider><UITooltip><TooltipTrigger className="flex"><Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" /></TooltipTrigger><TooltipContent side="top">Daily trackable budget based on your set allowance.</TooltipContent></UITooltip></TooltipProvider></CardTitle>
                       <CardDescription>
                         {new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })} - Track daily expenses against your monthly allowance
                       </CardDescription>
@@ -2001,65 +2102,95 @@ export default function CalculatorPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {consumableRows.map((row, idx) => (
-                    <div key={idx} className="flex items-end gap-2">
-                      <div className="flex-1 min-w-0">
-                        <Label htmlFor={`cons-date-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Date</Label>
-                        <Input
-                          id={`cons-date-${idx}`}
-                          type="date"
-                          value={row.date}
-                          onChange={(e) => {
-                            const updated = [...consumableRows];
-                            updated[idx] = { ...updated[idx], date: e.target.value };
-                            setConsumableRows(updated);
-                          }}
-                          className="h-9 text-sm"
-                        />
-                      </div>
-                      <div className="flex-[2] min-w-0">
-                        <Label htmlFor={`cons-desc-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Description</Label>
+                    <div key={idx} className="flex flex-col gap-2 sm:grid sm:grid-cols-[1fr_140px_100px_36px] sm:items-end">
+                      {/* Description */}
+                      <div className="w-full">
+                        {idx === 0 && (
+                          <Label htmlFor={`cons-desc-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Description</Label>
+                        )}
                         <Input
                           id={`cons-desc-${idx}`}
                           placeholder="e.g. Lunch, Water, Snacks"
                           value={row.description}
                           onChange={(e) => {
+                            const value = e.target.value;
                             const updated = [...consumableRows];
-                            updated[idx] = { ...updated[idx], description: e.target.value };
+                            const match = consumableSuggestions.find(
+                              (s) => s.description.toLowerCase() === value.trim().toLowerCase()
+                            );
+                            updated[idx] = {
+                              ...updated[idx],
+                              description: value,
+                              amount: match ? String(match.amount) : updated[idx].amount
+                            };
                             setConsumableRows(updated);
                           }}
-                          className="h-9 text-sm"
+                          className="h-9 text-base sm:text-sm"
+                          list="consumable-suggestions"
                         />
                       </div>
-                      <div className="w-28">
-                        <Label htmlFor={`cons-amt-${idx}`} className="mb-1.5 text-xs text-muted-foreground">Amount</Label>
-                        <Input
-                          id={`cons-amt-${idx}`}
-                          type="number"
-                          placeholder="0"
-                          step="0.01"
-                          min="0"
-                          value={row.amount}
-                          onChange={(e) => {
-                            const updated = [...consumableRows];
-                            updated[idx] = { ...updated[idx], amount: e.target.value };
-                            setConsumableRows(updated);
-                          }}
-                          className="h-9 text-sm tabular-nums"
-                        />
+                      {/* Date, Amount, Trash */}
+                      <div className="grid grid-cols-[1.2fr_1fr_40px] gap-2 items-end sm:contents">
+                        <div>
+                          {idx === 0 && (
+                            <Label htmlFor={`cons-date-${idx}`} className="mb-1.5 text-xs text-muted-foreground block">Date</Label>
+                          )}
+                          <Input
+                            id={`cons-date-${idx}`}
+                            type="date"
+                            value={row.date}
+                            onChange={(e) => {
+                              const updated = [...consumableRows];
+                              updated[idx] = { ...updated[idx], date: e.target.value };
+                              setConsumableRows(updated);
+                            }}
+                            className="h-9 text-base sm:text-sm"
+                          />
+                        </div>
+                        <div>
+                          {idx === 0 && (
+                            <Label htmlFor={`cons-amt-${idx}`} className="mb-1.5 text-xs text-muted-foreground block">Amount</Label>
+                          )}
+                          <Input
+                            id={`cons-amt-${idx}`}
+                            type="number"
+                            placeholder="0"
+                            step="0.01"
+                            min="0"
+                            value={row.amount}
+                            onChange={(e) => {
+                              const updated = [...consumableRows];
+                              updated[idx] = { ...updated[idx], amount: e.target.value };
+                              setConsumableRows(updated);
+                            }}
+                            className="h-9 text-base sm:text-sm tabular-nums"
+                          />
+                        </div>
+                        <div className="flex items-center justify-center">
+                          {consumableRows.length > 1 ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => setConsumableRows(consumableRows.filter((_, i) => i !== idx))}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          ) : (
+                            <div className="w-9 h-9" />
+                          )}
+                        </div>
                       </div>
-                      {consumableRows.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => setConsumableRows(consumableRows.filter((_, i) => i !== idx))}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
                     </div>
                   ))}
+                  <datalist id="consumable-suggestions">
+                    {consumableSuggestions.map((s) => (
+                      <option key={s.description} value={s.description}>
+                        P {formatPHP(s.amount)}
+                      </option>
+                    ))}
+                  </datalist>
 
                   <div className="flex items-center gap-2">
                     <Button
@@ -2099,6 +2230,7 @@ export default function CalculatorPage() {
                           const expenses = await getConsumableExpenses(currentMonth);
                           setConsumableExpenses(expenses);
                           setConsumableRows([{ description: '', amount: '', date: new Date().toISOString().split('T')[0] }]);
+                          await loadAutocompleteSuggestions();
                         } catch (err) {
                           toast.error(err instanceof Error ? err.message : 'Failed to add expense.');
                         } finally {

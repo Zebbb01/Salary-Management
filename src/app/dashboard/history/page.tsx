@@ -20,14 +20,18 @@ import {
   Search,
   Lock,
   CheckCircle2,
-  Clock,
   ArrowRight,
   DollarSign,
   PiggyBank,
-  Receipt,
   ShoppingBag,
+  Clock,
+  Receipt,
   ShoppingCart,
   HandCoins,
+  Info,
+  Scale,
+  AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -41,9 +45,15 @@ import {
   Bar,
   Legend,
 } from 'recharts';
+import {
+  Tooltip as UITooltip,
+  TooltipProvider,
+  TooltipTrigger,
+  TooltipContent,
+} from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import type { PayPeriod, SpareTransaction, BillPayment, ConsumableMonthlyRecord, Borrowing, ConsumableExpense } from '@/features/salary/types/salary.types';
+import type { PayPeriod, SpareTransaction, BillPayment, ConsumableMonthlyRecord, Borrowing, ConsumableExpense, BorrowingWithExpenses } from '@/features/salary/types/salary.types';
 import {
   getPayPeriods,
   deletePayPeriod,
@@ -51,7 +61,7 @@ import {
   getBillPayments,
   getConsumableMonthlyRecords,
   getConsumableExpenses,
-  getBorrowings,
+  getBorrowingsWithExpenses,
   snapshotConsumableMonth,
   autoSnapshotPreviousMonth,
   getCurrentUser,
@@ -135,6 +145,197 @@ function EmptyState() {
             </Button>
           </Link>
         </motion.div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// ANIMATED NUMBER & STAT CARD
+// ---------------------------------------------------------------------------
+function AnimatedNumber({ value, isCurrency = true }: { value: number; isCurrency?: boolean }) {
+  const [displayed, setDisplayed] = useState(0);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const duration = 600;
+    const start = performance.now();
+    const from = displayed;
+
+    function tick(now: number) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayed(from + (value - from) * eased);
+      if (progress < 1) {
+        frameRef.current = requestAnimationFrame(tick);
+      }
+    }
+
+    frameRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+  }, [value]);
+
+  return (
+    <span className="tabular-nums">
+      {isCurrency ? formatPHP(displayed) : Math.round(displayed)}
+    </span>
+  );
+}
+
+const themeClasses = {
+  indigo: {
+    accent: 'bg-indigo-500',
+    glow: 'from-indigo-500/10 via-indigo-500/5 to-transparent',
+    cardBg: 'from-card via-card to-indigo-950/15',
+    iconColor: 'text-indigo-500/5 dark:text-indigo-400/5 group-hover:text-indigo-500/10 dark:group-hover:text-indigo-400/10',
+    textAccent: 'text-indigo-500 dark:text-indigo-400',
+  },
+  sky: {
+    accent: 'bg-sky-500',
+    glow: 'from-sky-500/10 via-sky-500/5 to-transparent',
+    cardBg: 'from-card via-card to-sky-950/15',
+    iconColor: 'text-sky-500/5 dark:text-sky-400/5 group-hover:text-sky-500/10 dark:group-hover:text-sky-400/10',
+    textAccent: 'text-sky-500 dark:text-sky-400',
+  },
+  teal: {
+    accent: 'bg-teal-500',
+    glow: 'from-teal-500/10 via-teal-500/5 to-transparent',
+    cardBg: 'from-card via-card to-teal-950/15',
+    iconColor: 'text-teal-500/5 dark:text-teal-400/5 group-hover:text-teal-500/10 dark:group-hover:text-teal-400/10',
+    textAccent: 'text-teal-500 dark:text-teal-400',
+  },
+  rose: {
+    accent: 'bg-rose-500',
+    glow: 'from-rose-500/10 via-rose-500/5 to-transparent',
+    cardBg: 'from-card via-card to-rose-950/15',
+    iconColor: 'text-rose-500/5 dark:text-rose-400/5 group-hover:text-rose-500/10 dark:group-hover:text-rose-400/10',
+    textAccent: 'text-rose-500 dark:text-rose-400',
+  },
+  emerald: {
+    accent: 'bg-emerald-500',
+    glow: 'from-emerald-500/10 via-emerald-500/5 to-transparent',
+    cardBg: 'from-card via-card to-emerald-950/15',
+    iconColor: 'text-emerald-500/5 dark:text-emerald-400/5 group-hover:text-emerald-500/10 dark:group-hover:text-emerald-400/10',
+    textAccent: 'text-emerald-500 dark:text-emerald-400',
+  },
+  amber: {
+    accent: 'bg-amber-500',
+    glow: 'from-amber-500/10 via-amber-500/5 to-transparent',
+    cardBg: 'from-card via-card to-amber-950/15',
+    iconColor: 'text-amber-500/5 dark:text-amber-400/5 group-hover:text-amber-500/10 dark:group-hover:text-amber-400/10',
+    textAccent: 'text-amber-500 dark:text-amber-400',
+  },
+  violet: {
+    accent: 'bg-violet-500',
+    glow: 'from-violet-500/10 via-violet-500/5 to-transparent',
+    cardBg: 'from-card via-card to-violet-950/15',
+    iconColor: 'text-violet-500/5 dark:text-violet-400/5 group-hover:text-violet-500/10 dark:group-hover:text-violet-400/10',
+    textAccent: 'text-violet-500 dark:text-violet-400',
+  },
+  orange: {
+    accent: 'bg-orange-500',
+    glow: 'from-orange-500/10 via-orange-500/5 to-transparent',
+    cardBg: 'from-card via-card to-orange-950/15',
+    iconColor: 'text-orange-500/5 dark:text-orange-400/5 group-hover:text-orange-500/10 dark:group-hover:text-orange-400/10',
+    textAccent: 'text-orange-500 dark:text-orange-400',
+  },
+};
+
+interface HistoryStatCardProps {
+  label: string;
+  value: number;
+  icon: React.ElementType;
+  colorTheme: keyof typeof themeClasses;
+  tooltip?: React.ReactNode;
+  subtitle?: string;
+  isCurrency?: boolean;
+  textColorOverride?: string;
+}
+
+function HistoryStatCard({
+  label,
+  value,
+  icon: Icon,
+  colorTheme,
+  tooltip,
+  subtitle,
+  isCurrency = true,
+  textColorOverride,
+}: HistoryStatCardProps) {
+  const theme = themeClasses[colorTheme];
+
+  return (
+    <Card className={cn(
+      "group relative overflow-hidden border border-border/40 bg-gradient-to-br backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:border-border/80 h-full",
+      theme.cardBg
+    )}>
+      {/* Top Accent Line */}
+      <div className={cn(
+        "absolute top-0 left-0 right-0 h-[2px] opacity-35 group-hover:opacity-100 transition-opacity duration-300",
+        theme.accent
+      )} />
+
+      {/* Dotted Grid Background */}
+      <div 
+        className="absolute inset-0 opacity-[0.03] dark:opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.05] dark:group-hover:opacity-[0.09] pointer-events-none"
+        style={{
+          backgroundImage: 'radial-gradient(circle, var(--foreground) 1px, transparent 1px)',
+          backgroundSize: '12px 12px',
+        }}
+      />
+
+      {/* Glow backdrop effect */}
+      <div className={cn(
+        "absolute -right-8 -top-8 h-20 w-20 rounded-full bg-gradient-to-br blur-2xl opacity-10 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none",
+        theme.glow
+      )} />
+      
+      {/* Large watermark icon in the background */}
+      <div className={cn(
+        "absolute -right-6 -bottom-6 transition-all duration-500 transform rotate-12 group-hover:scale-110 group-hover:rotate-[15deg] pointer-events-none",
+        theme.iconColor
+      )}>
+        <Icon className="h-28 w-28 stroke-[1.2]" />
+      </div>
+
+      <CardContent className="p-3.5 sm:p-5 h-full flex flex-col justify-between gap-3 relative z-10">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[9px] sm:text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+            {label}
+          </span>
+          
+          {tooltip && (
+            <UITooltip>
+              <TooltipTrigger className="flex shrink-0">
+                <Info className="h-3.5 w-3.5 text-muted-foreground/35 hover:text-muted-foreground/75 cursor-help transition-colors" />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <div>{tooltip}</div>
+              </TooltipContent>
+            </UITooltip>
+          )}
+        </div>
+
+        <div>
+          <p className={cn(
+            "text-base sm:text-lg md:text-xl lg:text-2xl font-bold tracking-tight font-display flex items-baseline truncate",
+            textColorOverride || theme.textAccent
+          )}>
+            {isCurrency && (
+              <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground/60 mr-1 select-none">
+                PHP
+              </span>
+            )}
+            <AnimatedNumber value={value} isCurrency={isCurrency} />
+          </p>
+          {subtitle && (
+            <p className="text-[10px] sm:text-[11px] text-muted-foreground mt-1 font-normal">{subtitle}</p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -376,7 +577,7 @@ function SpareAmountChart({ periods, isMobile }: { periods: PayPeriod[]; isMobil
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={chartData}
-                margin={{ top: 4, right: 20, left: 0, bottom: 0 }}
+                margin={{ top: 4, right: 20, left: 10, bottom: 0 }}
               >
                 <defs>
                   <linearGradient id="spareGradient" x1="0" y1="0" x2="0" y2="1">
@@ -391,6 +592,7 @@ function SpareAmountChart({ periods, isMobile }: { periods: PayPeriod[]; isMobil
                   tickLine={false}
                 />
                 <YAxis
+                  width={45}
                   tick={{ fontSize: 11, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
@@ -686,7 +888,7 @@ function IncomeExpensesChart({ periods, isMobile }: { periods: PayPeriod[]; isMo
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={chartData}
-                margin={{ top: 4, right: 20, left: 0, bottom: 0 }}
+                margin={{ top: 4, right: 20, left: 10, bottom: 0 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
                 <XAxis
@@ -696,6 +898,7 @@ function IncomeExpensesChart({ periods, isMobile }: { periods: PayPeriod[]; isMo
                   tickLine={false}
                 />
                 <YAxis
+                  width={45}
                   tick={{ fontSize: 11, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
@@ -773,9 +976,9 @@ export default function HistoryPage() {
   }, [fetchPeriods]);
 
   // ------ New tab state ------
-  const [activeTab, setActiveTab] = useState<'payroll' | 'consumable' | 'borrowing'>('payroll');
+  const [activeTab, setActiveTab] = useState<'overall' | 'payroll' | 'consumable' | 'borrowing'>('overall');
   const [consumableRecords, setConsumableRecords] = useState<ConsumableMonthlyRecord[]>([]);
-  const [borrowingHistory, setBorrowingHistory] = useState<Borrowing[]>([]);
+  const [borrowingHistory, setBorrowingHistory] = useState<BorrowingWithExpenses[]>([]);
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const [monthExpenses, setMonthExpenses] = useState<Record<string, ConsumableExpense[]>>({});
   const [isLoadingTab, setIsLoadingTab] = useState(false);
@@ -805,6 +1008,8 @@ export default function HistoryPage() {
     }
   }, [dateFilter, customMonth]);
 
+
+
   const loadConsumableHistory = useCallback(async () => {
     setIsLoadingTab(true);
     try {
@@ -831,7 +1036,7 @@ export default function HistoryPage() {
     setIsLoadingTab(true);
     try {
       const settled = borrowingFilter === 'all' ? undefined : borrowingFilter === 'settled';
-      const data = await getBorrowings({ settled });
+      const data = await getBorrowingsWithExpenses({ settled });
       // Apply client-side date filtering if dateRange is set
       const filtered = dateRange
         ? data.filter((b) => {
@@ -858,8 +1063,14 @@ export default function HistoryPage() {
   }, [monthExpenses]);
 
   useEffect(() => {
-    if (activeTab === 'consumable') loadConsumableHistory();
-    else if (activeTab === 'borrowing') loadBorrowingHistory();
+    if (activeTab === 'overall') {
+      loadConsumableHistory();
+      loadBorrowingHistory();
+    } else if (activeTab === 'consumable') {
+      loadConsumableHistory();
+    } else if (activeTab === 'borrowing') {
+      loadBorrowingHistory();
+    }
   }, [activeTab, loadConsumableHistory, loadBorrowingHistory]);
 
   // Delete handler
@@ -911,7 +1122,7 @@ export default function HistoryPage() {
   }
 
   // Date filter
-  const dateFilteredPeriods = (() => {
+  const dateFilteredPeriods = useMemo(() => {
     if (dateFilter === 'all-time') return periods;
     const now = new Date();
     const year = now.getFullYear();
@@ -948,87 +1159,284 @@ export default function HistoryPage() {
       if (!created) return false;
       return created >= dateFrom && created <= dateTo;
     });
-  })();
+  }, [periods, dateFilter, customMonth]);
 
 
   // Search filter (applied on top of date filter)
-  const filteredPeriods = searchQuery.trim()
-    ? dateFilteredPeriods.filter((p) => {
-        const query = searchQuery.toLowerCase().trim();
-        const terms = query.split(/\s+/).filter(Boolean);
-        if (terms.length === 0) return true;
+  const filteredPeriods = useMemo(() => {
+    return searchQuery.trim()
+      ? dateFilteredPeriods.filter((p) => {
+          const query = searchQuery.toLowerCase().trim();
+          const terms = query.split(/\s+/).filter(Boolean);
+          if (terms.length === 0) return true;
 
-        // Gather all searchable strings for this period
-        const searchableStrings: string[] = [
-          p.period_label.toLowerCase()
-        ];
+          // Gather all searchable strings for this period
+          const searchableStrings: string[] = [
+            p.period_label.toLowerCase()
+          ];
 
-        if (p.created_at) {
-          const dateObj = new Date(p.created_at);
-          if (!isNaN(dateObj.getTime())) {
-            // Formatted date as displayed in the UI, e.g. "Jun 18, 2026"
-            const formattedPH = formatDate(p.created_at).toLowerCase();
-            const fullMonth = dateObj.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
-            const shortMonth = dateObj.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
-            const year = dateObj.getFullYear().toString();
-            const day = dateObj.getDate().toString();
-            const numericMonth = (dateObj.getMonth() + 1).toString();
-            const numericMonthPad = (dateObj.getMonth() + 1).toString().padStart(2, '0');
-            const numericDayPad = dateObj.getDate().toString().padStart(2, '0');
-            
-            searchableStrings.push(
-              formattedPH,
-              fullMonth,
-              shortMonth,
-              year,
-              day,
-              numericMonth,
-              `${year}-${numericMonthPad}-${numericDayPad}`,
-              `${numericMonthPad}/${numericDayPad}/${year}`
-            );
+          if (p.created_at) {
+            const dateObj = new Date(p.created_at);
+            if (!isNaN(dateObj.getTime())) {
+              // Formatted date as displayed in the UI, e.g. "Jun 18, 2026"
+              const formattedPH = formatDate(p.created_at).toLowerCase();
+              const fullMonth = dateObj.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
+              const shortMonth = dateObj.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+              const year = dateObj.getFullYear().toString();
+              const day = dateObj.getDate().toString();
+              const numericMonth = (dateObj.getMonth() + 1).toString();
+              const numericMonthPad = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+              const numericDayPad = dateObj.getDate().toString().padStart(2, '0');
+              
+              searchableStrings.push(
+                formattedPH,
+                fullMonth,
+                shortMonth,
+                year,
+                day,
+                numericMonth,
+                `${year}-${numericMonthPad}-${numericDayPad}`,
+                `${numericMonthPad}/${numericDayPad}/${year}`
+              );
+            }
           }
-        }
 
-        // For a period to match, EVERY term in the search query must match AT LEAST ONE searchable string
-        return terms.every((term) =>
-          searchableStrings.some((str) => str.includes(term))
-        );
-      })
-    : dateFilteredPeriods;
+          // For a period to match, EVERY term in the search query must match AT LEAST ONE searchable string
+          return terms.every((term) =>
+            searchableStrings.some((str) => str.includes(term))
+          );
+        })
+      : dateFilteredPeriods;
+  }, [dateFilteredPeriods, searchQuery]);
 
-  const [totalSpareSpent, setTotalSpareSpent] = useState(0);
+  const [spareTransactions, setSpareTransactions] = useState<SpareTransaction[]>([]);
+
+  const totalSpareSpent = useMemo(() => {
+    return spareTransactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  }, [spareTransactions]);
 
   useEffect(() => {
     let cancelled = false;
-    async function loadSpareSpent() {
+    async function loadSpareTransactions() {
       try {
         const results = await Promise.all(
           filteredPeriods.map((p) => getSpareTransactions(p.id))
         );
         if (!cancelled) {
-          const total = results.flat().reduce((sum, t) => sum + t.amount, 0);
-          setTotalSpareSpent(total);
+          setSpareTransactions(results.flat());
         }
       } catch {
         // Silently handle
       }
     }
     if (filteredPeriods.length > 0) {
-      loadSpareSpent();
+      loadSpareTransactions();
     } else {
-      setTotalSpareSpent(0);
+      setSpareTransactions([]);
     }
     return () => { cancelled = true; };
   }, [filteredPeriods]);
 
+  // Compute overall aggregates
+  const overallStats = useMemo(() => {
+    const totalGrossIncome = filteredPeriods.reduce((sum, p) => sum + (p.total_income ?? 0), 0);
+    const totalNetPay = filteredPeriods.reduce((sum, p) => {
+      const netPay = (p.total_income ?? 0) - (p.total_tax ?? 0) - (p.total_deductions ?? 0);
+      return sum + netPay;
+    }, 0);
+    const totalAllocated = filteredPeriods.reduce((sum, p) => {
+      const pAllocated = (p.allocation_amounts || []).reduce((acc, item) => acc + Number(item.actual || 0), 0);
+      return sum + pAllocated;
+    }, 0);
+    const totalSpareBudget = filteredPeriods.reduce((sum, p) => sum + Number(p.spare_amount || 0), 0);
+    
+    const consumableBudget = consumableRecords.reduce((sum, r) => sum + Number(r.allowance), 0);
+    const consumableSpent = consumableRecords.reduce((sum, r) => sum + Number(r.total_spent), 0);
+    
+    const activeBorrowed = borrowingHistory
+      .filter((b) => b.type === 'borrowed' && !b.is_settled)
+      .reduce((sum, b) => sum + Number(b.amount), 0);
+    const activeLent = borrowingHistory
+      .filter((b) => b.type === 'lent' && !b.is_settled)
+      .reduce((sum, b) => sum + Number(b.amount), 0);
+      
+    // Sum of spent from active or historical borrowed accounts
+    const totalBorrowingSpent = borrowingHistory
+      .filter((b) => b.type === 'borrowed')
+      .reduce((sum, b) => sum + Number(b.totalSpent || 0), 0);
+      
+    // Sum of lent records that were forgiven/gifted by the user (counts as expense/outflow)
+    const totalLentForgiven = borrowingHistory
+      .filter((b) => b.type === 'lent' && b.is_gifted)
+      .reduce((sum, b) => sum + Number(b.amount), 0);
+      
+    // Sum of borrowed records that were gifted to the user (adds to spare)
+    const giftedIncome = borrowingHistory
+      .filter((b) => b.type === 'borrowed' && b.is_gifted)
+      .reduce((sum, b) => sum + Number(b.amount), 0);
+      
+    const totalOutflow = totalAllocated + totalSpareSpent + consumableSpent + totalBorrowingSpent + totalLentForgiven;
+    const remainingSpare = (totalSpareBudget + giftedIncome) - totalSpareSpent - consumableSpent - totalBorrowingSpent;
+    const remainingConsumable = consumableBudget - consumableSpent;
+    const netBorrowing = activeLent - activeBorrowed;
+
+    return {
+      totalNetPay,
+      totalAllocated,
+      totalSpareBudget,
+      totalSpareSpent,
+      consumableBudget,
+      consumableSpent,
+      activeBorrowed,
+      activeLent,
+      totalOutflow,
+      remainingSpare,
+      remainingConsumable,
+      netBorrowing,
+      totalBorrowingSpent,
+      totalLentForgiven,
+      totalGrossIncome,
+      giftedIncome,
+    };
+  }, [filteredPeriods, totalSpareSpent, consumableRecords, borrowingHistory]);
+
+  // Combined chart data aggregator
+  const overallChartData = useMemo(() => {
+    const dataMap = new Map<string, { monthLabel: string; income: number; spent: number }>();
+
+    // 1. Process periods (Payroll income and spare_spent)
+    for (const p of filteredPeriods) {
+      const dateStr = p.created_at || new Date().toISOString();
+      const monthKey = dateStr.substring(0, 7); // "YYYY-MM"
+      const entry = dataMap.get(monthKey) ?? {
+        monthLabel: new Date(monthKey + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        income: 0,
+        spent: 0,
+      };
+      const netPay = (p.total_income ?? 0) - (p.total_tax ?? 0) - (p.total_deductions ?? 0);
+      entry.income += netPay;
+      
+      const pAllocated = (p.allocation_amounts || []).reduce((acc, item) => acc + Number(item.actual || 0), 0);
+      const pSpareSpent = spareTransactions
+        .filter((t) => t.pay_period_id === p.id)
+        .reduce((sum, t) => sum + Number(t.amount), 0);
+
+      entry.spent += pAllocated + pSpareSpent;
+      dataMap.set(monthKey, entry);
+    }
+
+    // 2. Process consumable records (Consumable spent)
+    for (const r of consumableRecords) {
+      const monthKey = r.month; // "YYYY-MM"
+      const entry = dataMap.get(monthKey) ?? {
+        monthLabel: new Date(monthKey + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+        income: 0,
+        spent: 0,
+      };
+      entry.spent += Number(r.total_spent);
+      dataMap.set(monthKey, entry);
+    }
+
+    // 3. Process borrowing expenses (spent from borrowed money) and forgiven lent entries
+    for (const b of borrowingHistory) {
+      if (b.type === 'borrowed') {
+        for (const exp of b.expenses || []) {
+          const dateStr = exp.expense_date || new Date().toISOString();
+          const monthKey = dateStr.substring(0, 7); // "YYYY-MM"
+          const entry = dataMap.get(monthKey) ?? {
+            monthLabel: new Date(monthKey + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+            income: 0,
+            spent: 0,
+          };
+          entry.spent += Number(exp.amount || 0);
+          dataMap.set(monthKey, entry);
+        }
+      } else if (b.type === 'lent' && b.is_gifted) {
+        // Forgiven lent amount becomes an outflow in the month settled
+        const dateStr = b.settled_at || b.transaction_date || new Date().toISOString();
+        const monthKey = dateStr.substring(0, 7); // "YYYY-MM"
+        const entry = dataMap.get(monthKey) ?? {
+          monthLabel: new Date(monthKey + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+          income: 0,
+          spent: 0,
+        };
+        entry.spent += Number(b.amount);
+        dataMap.set(monthKey, entry);
+      }
+    }
+
+    // Convert to sorted array
+    return Array.from(dataMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([_, val]) => val);
+  }, [filteredPeriods, spareTransactions, consumableRecords, borrowingHistory]);
+
+  // Layout helper percentages for data visualization
+  const payrollProgress = useMemo(() => {
+    const netPay = overallStats.totalNetPay || 1;
+    const fixedPct = Math.min((overallStats.totalAllocated / netPay) * 100, 100);
+    const sparePct = Math.min((overallStats.totalSpareBudget / netPay) * 100, 100 - fixedPct);
+    const remainingPct = Math.max(0, 100 - fixedPct - sparePct);
+    return { fixedPct, sparePct, remainingPct };
+  }, [overallStats]);
+
+  const consumableProgress = useMemo(() => {
+    const budget = overallStats.consumableBudget || 1;
+    const spentPct = Math.min((overallStats.consumableSpent / budget) * 100, 100);
+    const isOver = overallStats.consumableSpent > overallStats.consumableBudget;
+    return { spentPct, isOver };
+  }, [overallStats]);
+
+  const debtProgress = useMemo(() => {
+    const borrowed = overallStats.activeBorrowed;
+    const lent = overallStats.activeLent;
+    const total = borrowed + lent || 1;
+    const borrowedPct = Math.min((borrowed / total) * 100, 100);
+    const lentPct = Math.min((lent / total) * 100, 100);
+    return { borrowedPct, lentPct, hasDebts: borrowed > 0 || lent > 0 };
+  }, [overallStats]);
+
   const aggregates = useMemo(() => {
-    const totalIncome = filteredPeriods.reduce((sum, p) => sum + (p.total_income ?? 0), 0);
-    const totalExpenses = filteredPeriods.reduce((sum, p) => sum + (p.total_expenses ?? 0), 0);
-    const totalSavings = filteredPeriods.reduce((sum, p) => sum + (p.total_savings ?? 0), 0);
-    const totalSpending = totalExpenses + totalSavings + totalSpareSpent;
-    const totalSpareAllocated = filteredPeriods.reduce((sum, p) => sum + (p.spare_amount ?? 0), 0);
+    let totalIncome = 0;
+    let totalSavings = 0;
+    let totalExpenses = 0;
+    let totalSpareAllocated = 0;
+    
+    filteredPeriods.forEach((p) => {
+      totalIncome += Number(p.total_income ?? 0);
+      totalSpareAllocated += Number(p.spare_amount ?? 0);
+      
+      let periodAssets = 0;
+      let periodExpenses = 0;
+      let hasTypeData = false;
+      const allocAmounts = (p.allocation_amounts ?? []) as { actual?: number; allocation_type?: string }[];
+      for (const a of allocAmounts) {
+        const actual = Number(a.actual ?? 0);
+        if (a.allocation_type === 'asset') {
+          periodAssets += actual;
+          hasTypeData = true;
+        } else if (a.allocation_type === 'expense') {
+          periodExpenses += actual;
+          hasTypeData = true;
+        }
+      }
+      
+      if (hasTypeData) {
+        totalSavings += periodAssets;
+        totalExpenses += periodExpenses;
+      } else {
+        totalSavings += Number(p.total_savings ?? 0);
+        totalExpenses += Number(p.total_expenses ?? 0);
+      }
+    });
+
+    // Add spare spent to total expenses to match Dashboard's monthlyExpenses calculation
+    totalExpenses += totalSpareSpent;
+    
+    const totalSpending = totalExpenses + totalSavings;
     const remainingSpare = totalSpareAllocated - totalSpareSpent;
-    return { totalIncome, totalSpending, totalExpenses, totalSavings, remainingSpare };
+    
+    return { totalIncome, totalSpending, totalExpenses, totalSavings, remainingSpare, totalSpareAllocated };
   }, [filteredPeriods, totalSpareSpent]);
 
   const totalPages = Math.max(1, Math.ceil(filteredPeriods.length / perPage));
@@ -1140,20 +1548,428 @@ export default function HistoryPage() {
 
         {/* History Type Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'payroll' | 'consumable' | 'borrowing')} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="payroll" className="gap-1.5">
+          <TabsList className="flex w-full items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
+            <TabsTrigger value="overall" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
+              <TrendingUp className="h-4 w-4" />
+              <span className="tab-label-reveal">Overall</span>
+            </TabsTrigger>
+            <TabsTrigger value="payroll" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <Receipt className="h-4 w-4" />
-              Payroll
+              <span className="tab-label-reveal">Payroll</span>
             </TabsTrigger>
-            <TabsTrigger value="consumable" className="gap-1.5">
+            <TabsTrigger value="consumable" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <ShoppingCart className="h-4 w-4" />
-              Consumable
+              <span className="tab-label-reveal">Consumable</span>
             </TabsTrigger>
-            <TabsTrigger value="borrowing" className="gap-1.5">
+            <TabsTrigger value="borrowing" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <HandCoins className="h-4 w-4" />
-              Borrowing
+              <span className="tab-label-reveal">Borrowing</span>
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="overall" className="space-y-8">
+            {/* Summary Cards Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+              <HistoryStatCard
+                label="Total Gross Income"
+                value={overallStats.totalGrossIncome}
+                icon={TrendingUp}
+                colorTheme="teal"
+                tooltip="Total income before taxes and deductions across all periods"
+              />
+
+              <HistoryStatCard
+                label="Total Income (Net Pay)"
+                value={overallStats.totalNetPay}
+                icon={TrendingUp}
+                colorTheme="emerald"
+                tooltip={
+                  <div className="space-y-1">
+                    <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                    <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                      <span className="text-muted-foreground">Gross Income:</span>
+                      <span className="font-medium">PHP {formatPHP(overallStats.totalNetPay + filteredPeriods.reduce((sum, p) => sum + (p.total_tax ?? 0) + (p.total_deductions ?? 0), 0))}</span>
+                      <span className="text-muted-foreground">Total Taxes:</span>
+                      <span className="text-rose-500 font-medium">- PHP {formatPHP(filteredPeriods.reduce((sum, p) => sum + (p.total_tax ?? 0), 0))}</span>
+                      <span className="text-muted-foreground">Total Deductions:</span>
+                      <span className="text-rose-500 font-medium">- PHP {formatPHP(filteredPeriods.reduce((sum, p) => sum + (p.total_deductions ?? 0), 0))}</span>
+                    </div>
+                  </div>
+                }
+              />
+
+              <HistoryStatCard
+                label="Total Expenditures"
+                value={overallStats.totalOutflow}
+                icon={ShoppingCart}
+                colorTheme="rose"
+                tooltip={
+                  <div className="space-y-1">
+                    <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                    <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                      <span className="text-muted-foreground">Fixed Allocations:</span>
+                      <span className="font-medium">PHP {formatPHP(overallStats.totalAllocated)}</span>
+                      <span className="text-muted-foreground">Spare Spent:</span>
+                      <span className="font-medium">+ PHP {formatPHP(overallStats.totalSpareSpent)}</span>
+                      <span className="text-muted-foreground">Consumables:</span>
+                      <span className="font-medium">+ PHP {formatPHP(overallStats.consumableSpent)}</span>
+                      <span className="text-muted-foreground">Borrowing Spent:</span>
+                      <span className="font-medium">+ PHP {formatPHP(overallStats.totalBorrowingSpent)}</span>
+                      {overallStats.totalLentForgiven > 0 && (
+                        <>
+                          <span className="text-rose-500/80">Forgiven Lent:</span>
+                          <span className="text-rose-500 font-medium">+ PHP {formatPHP(overallStats.totalLentForgiven)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                }
+              />
+
+              <HistoryStatCard
+                label="Available Spare"
+                value={overallStats.remainingSpare}
+                icon={Sparkles}
+                colorTheme="violet"
+                tooltip={
+                  <div className="space-y-1">
+                    <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                    <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                      <span className="text-muted-foreground">Total Spare Budget:</span>
+                      <span className="font-medium">PHP {formatPHP(overallStats.totalSpareBudget)}</span>
+                      
+                      {overallStats.giftedIncome > 0 && (
+                        <>
+                          <span className="text-emerald-500/80">Gifted/Forgiven Borrowings:</span>
+                          <span className="text-emerald-500 font-medium">+ PHP {formatPHP(overallStats.giftedIncome)}</span>
+                        </>
+                      )}
+                      
+                      <span className="text-muted-foreground">Spare Spent:</span>
+                      <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.totalSpareSpent)}</span>
+                      
+                      <span className="text-muted-foreground">Consumable Spent:</span>
+                      <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.consumableSpent)}</span>
+                      
+                      <span className="text-muted-foreground">Borrowing Expenses:</span>
+                      <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.totalBorrowingSpent)}</span>
+                    </div>
+                  </div>
+                }
+              />
+
+              <div className="col-span-2 md:col-span-1 lg:col-span-1">
+                <HistoryStatCard
+                  label="Net Outstanding Debts"
+                  value={Math.abs(overallStats.netBorrowing)}
+                  icon={Scale}
+                  colorTheme={overallStats.netBorrowing >= 0 ? "emerald" : "rose"}
+                  subtitle={overallStats.netBorrowing > 0 ? 'Others owe you more' : overallStats.netBorrowing < 0 ? 'You owe others more' : 'All settled'}
+                  tooltip={
+                    <div className="space-y-1">
+                      <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                      <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                        <span className="text-muted-foreground">Total Active Lent:</span>
+                        <span className="text-emerald-500 font-medium">PHP {formatPHP(overallStats.activeLent)}</span>
+                        <span className="text-muted-foreground">Total Active Borrowed:</span>
+                        <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.activeBorrowed)}</span>
+                      </div>
+                    </div>
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Combined Trend Chart Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Combined Cashflow Trends</CardTitle>
+                <CardDescription>Monthly comparison of Total Net Pay and Total Spending</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-72 min-w-0">
+                  {overallChartData.length === 0 ? (
+                    <div className="flex h-full flex-col items-center justify-center text-center">
+                      <TrendingUp className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                      <p className="text-sm text-muted-foreground">No historical data available</p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={overallChartData} margin={{ top: 8, right: 10, left: 15, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="overallIncome" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                          </linearGradient>
+                          <linearGradient id="overallSpent" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                        <XAxis dataKey="monthLabel" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                        <YAxis 
+                          width={65} 
+                          tick={{ fontSize: 11, fill: '#94a3b8' }} 
+                          axisLine={false} 
+                          tickLine={false} 
+                          tickFormatter={(v) => v === 0 ? '₱0' : v >= 1000 ? `₱${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : `₱${v}`} 
+                        />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload?.length) return null;
+                            const income = payload[0]?.value as number ?? 0;
+                            const spent = payload[1]?.value as number ?? 0;
+                            return (
+                              <div className="rounded-lg border border-border/50 bg-card/95 backdrop-blur-md shadow-xl p-3 space-y-1.5">
+                                <p className="text-xs font-semibold text-foreground">{payload[0]?.payload?.monthLabel}</p>
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between gap-6 text-xs">
+                                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Net Pay</span>
+                                    <span className="tabular-nums font-semibold text-emerald-500">PHP {formatPHP(income)}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-6 text-xs">
+                                    <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-500" /> Spent</span>
+                                    <span className="tabular-nums font-semibold text-rose-500">PHP {formatPHP(spent)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Legend verticalAlign="top" height={36} iconType="circle" iconSize={8} formatter={(value) => <span className="text-xs text-muted-foreground capitalize">{value === 'income' ? 'Net Pay' : 'Total Spent'}</span>} />
+                        <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#overallIncome)" name="income" />
+                        <Area type="monotone" dataKey="spent" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#overallSpent)" name="spent" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Financial Breakdown Card */}
+            <Card className="border border-border/50 bg-card/60 backdrop-blur-sm shadow-lg overflow-hidden">
+              <CardHeader className="border-b border-border/40 pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base font-semibold">Overall Financial Breakdown</CardTitle>
+                    <CardDescription className="text-xs">Consolidated statistics for all categories</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider bg-muted/30">
+                    Portfolio Mix
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6 space-y-6">
+                
+                {/* 1. PAYROLL & ALLOCATIONS */}
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      Payroll & Allocations
+                    </h4>
+                    <span className="text-xs text-muted-foreground">
+                      Total Net Income: <span className="font-semibold text-foreground">PHP {formatPHP(overallStats.totalNetPay)}</span>
+                    </span>
+                  </div>
+                  
+                  {/* Stacked Percentage Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="h-3 w-full flex overflow-hidden rounded-full bg-muted/60 border border-border/10 shadow-inner">
+                      <div 
+                        className="h-full bg-blue-500/90 transition-all duration-500 hover:brightness-110" 
+                        style={{ width: `${payrollProgress.fixedPct}%` }} 
+                        title={`Fixed Bills: ${payrollProgress.fixedPct.toFixed(1)}%`}
+                      />
+                      <div 
+                        className="h-full bg-amber-500/90 transition-all duration-500 hover:brightness-110" 
+                        style={{ width: `${payrollProgress.sparePct}%` }} 
+                        title={`Spare Budget: ${payrollProgress.sparePct.toFixed(1)}%`}
+                      />
+                      <div 
+                        className="h-full bg-emerald-500/90 transition-all duration-500 hover:brightness-110" 
+                        style={{ width: `${payrollProgress.remainingPct}%` }} 
+                        title={`Buffer/Savings: ${payrollProgress.remainingPct.toFixed(1)}%`}
+                      />
+                    </div>
+                    
+                    {/* Legend Details */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                          Fixed Allocated Bills
+                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-sm font-bold tabular-nums text-foreground">PHP {formatPHP(overallStats.totalAllocated)}</span>
+                          <span className="text-[10px] text-muted-foreground font-medium">{payrollProgress.fixedPct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Spare Budget Generated
+                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-sm font-bold tabular-nums text-foreground">PHP {formatPHP(overallStats.totalSpareBudget)}</span>
+                          <span className="text-[10px] text-muted-foreground font-medium">{payrollProgress.sparePct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          Remaining Unspent Spare
+                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-sm font-bold tabular-nums text-emerald-500">PHP {formatPHP(overallStats.remainingSpare)}</span>
+                          <span className="text-[10px] text-emerald-500/80 font-medium">{payrollProgress.remainingPct.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator className="bg-border/40" />
+
+                {/* 2. CONSUMABLE DAILY SPENDING */}
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-rose-500" />
+                      Consumable Daily Spending
+                    </h4>
+                    <span className="text-xs text-muted-foreground">
+                      Usage Rate: <span className="font-semibold text-foreground">{consumableProgress.spentPct.toFixed(1)}%</span>
+                    </span>
+                  </div>
+
+                  {/* Consumable Utilization Progress Bar */}
+                  <div className="space-y-2">
+                    <div className="h-3 w-full overflow-hidden rounded-full bg-muted/60 border border-border/10 shadow-inner">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all duration-500 hover:brightness-110',
+                          consumableProgress.isOver ? 'bg-rose-500/90' : 
+                            consumableProgress.spentPct >= 80 ? 'bg-amber-500/90' : 'bg-emerald-500/90'
+                        )}
+                        style={{ width: `${consumableProgress.spentPct}%` }}
+                      />
+                    </div>
+
+                    {/* Consumable Legend Details */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+                          Consumable Allowance
+                        </span>
+                        <span className="text-sm font-bold tabular-nums text-foreground">PHP {formatPHP(overallStats.consumableBudget)}</span>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className={cn("h-1.5 w-1.5 rounded-full", consumableProgress.isOver ? 'bg-rose-500' : consumableProgress.spentPct >= 80 ? 'bg-amber-500' : 'bg-emerald-500')} />
+                          Total Consumable Spent
+                        </span>
+                        <span className={cn("text-sm font-bold tabular-nums", consumableProgress.isOver ? 'text-rose-500' : consumableProgress.spentPct >= 80 ? 'text-amber-500' : 'text-emerald-500')}>
+                          PHP {formatPHP(overallStats.consumableSpent)}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className={cn("h-1.5 w-1.5 rounded-full", overallStats.remainingConsumable >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} />
+                          Remaining Budget
+                        </span>
+                        <span className={cn("text-sm font-bold tabular-nums", overallStats.remainingConsumable >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                          PHP {formatPHP(overallStats.remainingConsumable)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator className="bg-border/40" />
+
+                {/* 3. BORROWINGS & LENDINGS */}
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-amber-500" />
+                      Borrowings & Lendings
+                    </h4>
+                    <span className="text-xs text-muted-foreground">
+                      Net Balance: <span className={cn("font-semibold", overallStats.netBorrowing >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                        PHP {formatPHP(overallStats.netBorrowing)}
+                      </span>
+                    </span>
+                  </div>
+
+                  {/* Debt Ratio Progress Bar */}
+                  <div className="space-y-2">
+                    {debtProgress.hasDebts ? (
+                      <div className="h-3 w-full flex overflow-hidden rounded-full bg-muted/60 border border-border/10 shadow-inner">
+                        <div 
+                          className="h-full bg-rose-500/90 transition-all duration-500 hover:brightness-110" 
+                          style={{ width: `${debtProgress.borrowedPct}%` }}
+                          title={`Borrowed: ${debtProgress.borrowedPct.toFixed(1)}%`}
+                        />
+                        <div 
+                          className="h-full bg-emerald-500/90 transition-all duration-500 hover:brightness-110" 
+                          style={{ width: `${debtProgress.lentPct}%` }}
+                          title={`Lent: ${debtProgress.lentPct.toFixed(1)}%`}
+                        />
+                      </div>
+                    ) : (
+                      <div className="h-3 w-full flex items-center justify-center rounded-full bg-muted/60 border border-border/10 text-[9px] text-muted-foreground font-medium uppercase tracking-wide">
+                        No outstanding debt or lending records found
+                      </div>
+                    )}
+
+                    {/* Borrowing Legend Details */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                          Active Borrowed (I Owe)
+                        </span>
+                        <span className="text-sm font-bold tabular-nums text-rose-500">PHP {formatPHP(overallStats.activeBorrowed)}</span>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Spent from Borrowed
+                        </span>
+                        <span className="text-sm font-bold tabular-nums text-amber-500">PHP {formatPHP(overallStats.totalBorrowingSpent)}</span>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          Active Lent (Owed to Me)
+                        </span>
+                        <span className="text-sm font-bold tabular-nums text-emerald-500">PHP {formatPHP(overallStats.activeLent)}</span>
+                      </div>
+
+                      <div className="flex flex-col gap-0.5 rounded-lg bg-muted/20 p-2.5 border border-border/20">
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span className={cn("h-1.5 w-1.5 rounded-full", overallStats.netBorrowing >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} />
+                          Net Position
+                        </span>
+                        <span className={cn("text-sm font-bold tabular-nums", overallStats.netBorrowing >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                          PHP {formatPHP(overallStats.netBorrowing)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="payroll" className="space-y-8">
         {isLoading ? (
@@ -1165,61 +1981,47 @@ export default function HistoryPage() {
             {/* Aggregate Summary Cards */}
             {filteredPeriods.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10">
-                        <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
-                      </div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Income</p>
-                    </div>
-                    <p className="text-lg font-bold tabular-nums">PHP {formatPHP(aggregates.totalIncome)}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/10">
-                        <ShoppingBag className="h-3.5 w-3.5 text-orange-400" />
-                      </div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Spending</p>
-                    </div>
-                    <p className="text-lg font-bold tabular-nums">PHP {formatPHP(aggregates.totalSpending)}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-500/10">
-                        <Receipt className="h-3.5 w-3.5 text-rose-400" />
-                      </div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Expenses</p>
-                    </div>
-                    <p className="text-lg font-bold tabular-nums">PHP {formatPHP(aggregates.totalExpenses)}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/10">
-                        <PiggyBank className="h-3.5 w-3.5 text-violet-400" />
-                      </div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Savings</p>
-                    </div>
-                    <p className="text-lg font-bold tabular-nums">PHP {formatPHP(aggregates.totalSavings)}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/10">
-                        <Wallet className="h-3.5 w-3.5 text-sky-400" />
-                      </div>
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Remaining Spare</p>
-                    </div>
-                    <p className={cn("text-lg font-bold tabular-nums", aggregates.remainingSpare >= 0 ? '' : 'text-rose-500')}>PHP {formatPHP(aggregates.remainingSpare)}</p>
-                  </CardContent>
-                </Card>
+                <HistoryStatCard
+                  label="Total Income"
+                  value={aggregates.totalIncome}
+                  icon={DollarSign}
+                  colorTheme="emerald"
+                  tooltip="Total gross income before any deductions for the filtered periods."
+                />
+
+                <HistoryStatCard
+                  label="Total Spending"
+                  value={aggregates.totalSpending}
+                  icon={ShoppingBag}
+                  colorTheme="orange"
+                  tooltip="Total Expenses + Total Savings + Spare Spent for the filtered periods."
+                />
+
+                <HistoryStatCard
+                  label="Total Expenses"
+                  value={aggregates.totalExpenses}
+                  icon={Receipt}
+                  colorTheme="rose"
+                  tooltip="Budget Expenses + Spare Spent for the filtered periods. Matches Dashboard logic."
+                />
+
+                <HistoryStatCard
+                  label="Total Savings"
+                  value={aggregates.totalSavings}
+                  icon={PiggyBank}
+                  colorTheme="violet"
+                  tooltip="Sum of all asset allocations (Savings, Emergency) for the filtered periods."
+                />
+
+                <div className="col-span-2 md:col-span-1 lg:col-span-1">
+                  <HistoryStatCard
+                    label="Remaining Spare"
+                    value={aggregates.remainingSpare}
+                    icon={Wallet}
+                    colorTheme={aggregates.remainingSpare >= 0 ? "sky" : "rose"}
+                    tooltip={`Total Allocated Spare (${formatPHP(aggregates.totalSpareAllocated)}) minus Total Spare Spent (${formatPHP(totalSpareSpent)}).`}
+                  />
+                </div>
               </div>
             )}
 
@@ -1652,36 +2454,36 @@ export default function HistoryPage() {
               <>
                 {/* Consumable Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Months Tracked</p>
-                      <p className="text-xl font-bold tabular-nums">{consumableRecords.length}</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Avg Monthly Spend</p>
-                      <p className="text-xl font-bold tabular-nums text-amber-500">
-                        PHP {formatPHP(consumableRecords.length > 0 ? consumableRecords.reduce((s, r) => s + Number(r.total_spent), 0) / consumableRecords.length : 0)}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Under Budget</p>
-                      <p className="text-xl font-bold tabular-nums text-emerald-500">
-                        {consumableRecords.filter(r => !r.is_over_budget).length}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Over Budget</p>
-                      <p className="text-xl font-bold tabular-nums text-rose-500">
-                        {consumableRecords.filter(r => r.is_over_budget).length}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <HistoryStatCard
+                    label="Months Tracked"
+                    value={consumableRecords.length}
+                    icon={CalendarDays}
+                    colorTheme="indigo"
+                    isCurrency={false}
+                  />
+
+                  <HistoryStatCard
+                    label="Avg Monthly Spend"
+                    value={consumableRecords.length > 0 ? consumableRecords.reduce((s, r) => s + Number(r.total_spent), 0) / consumableRecords.length : 0}
+                    icon={Calculator}
+                    colorTheme="amber"
+                  />
+
+                  <HistoryStatCard
+                    label="Under Budget"
+                    value={consumableRecords.filter(r => !r.is_over_budget).length}
+                    icon={CheckCircle2}
+                    colorTheme="emerald"
+                    isCurrency={false}
+                  />
+
+                  <HistoryStatCard
+                    label="Over Budget"
+                    value={consumableRecords.filter(r => r.is_over_budget).length}
+                    icon={AlertTriangle}
+                    colorTheme="rose"
+                    isCurrency={false}
+                  />
                 </div>
 
                 {/* Monthly Records Table */}
@@ -1691,8 +2493,9 @@ export default function HistoryPage() {
                     <CardDescription>Budget vs actual spending per month</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Table>
-                      <TableHeader>
+                    <div className="w-full overflow-x-auto scrollbar-none">
+                      <Table>
+                        <TableHeader>
                         <TableRow>
                           <TableHead>Month</TableHead>
                           <TableHead className="text-right">Allowance</TableHead>
@@ -1762,6 +2565,7 @@ export default function HistoryPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -1785,7 +2589,7 @@ export default function HistoryPage() {
                               allowance: Number(r.allowance),
                               spent: Number(r.total_spent),
                             }))}
-                            margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
+                            margin={{ top: 8, right: 20, left: 10, bottom: 0 }}
                           >
                             <defs>
                               <linearGradient id="allowanceGradient" x1="0" y1="0" x2="0" y2="1">
@@ -1805,6 +2609,7 @@ export default function HistoryPage() {
                               tickLine={false}
                             />
                             <YAxis
+                              width={45}
                               tick={{ fontSize: 11, fill: '#94a3b8' }}
                               axisLine={false}
                               tickLine={false}
@@ -1898,38 +2703,35 @@ export default function HistoryPage() {
               <>
                 {/* Borrowing Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Total Borrowed</p>
-                      <p className="text-xl font-bold tabular-nums text-rose-500">
-                        PHP {formatPHP(borrowingHistory.filter(b => b.type === 'borrowed').reduce((s, b) => s + Number(b.amount), 0))}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Total Lent</p>
-                      <p className="text-xl font-bold tabular-nums text-emerald-500">
-                        PHP {formatPHP(borrowingHistory.filter(b => b.type === 'lent').reduce((s, b) => s + Number(b.amount), 0))}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Settled</p>
-                      <p className="text-xl font-bold tabular-nums">
-                        {borrowingHistory.filter(b => b.is_settled).length}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-5">
-                      <p className="text-xs text-muted-foreground mb-1">Active</p>
-                      <p className="text-xl font-bold tabular-nums text-amber-500">
-                        {borrowingHistory.filter(b => !b.is_settled).length}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <HistoryStatCard
+                    label="Total Borrowed"
+                    value={borrowingHistory.filter(b => b.type === 'borrowed').reduce((s, b) => s + Number(b.amount), 0)}
+                    icon={TrendingDown}
+                    colorTheme="rose"
+                  />
+
+                  <HistoryStatCard
+                    label="Total Lent"
+                    value={borrowingHistory.filter(b => b.type === 'lent').reduce((s, b) => s + Number(b.amount), 0)}
+                    icon={TrendingUp}
+                    colorTheme="emerald"
+                  />
+
+                  <HistoryStatCard
+                    label="Settled"
+                    value={borrowingHistory.filter(b => b.is_settled).length}
+                    icon={CheckCircle2}
+                    colorTheme="teal"
+                    isCurrency={false}
+                  />
+
+                  <HistoryStatCard
+                    label="Active"
+                    value={borrowingHistory.filter(b => !b.is_settled).length}
+                    icon={Clock}
+                    colorTheme="amber"
+                    isCurrency={false}
+                  />
                 </div>
 
                 {/* Borrowing Table */}
@@ -1939,9 +2741,10 @@ export default function HistoryPage() {
                     <CardDescription>All borrowing and lending records</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
+                    <div className="w-full overflow-x-auto scrollbar-none">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
                           <TableHead>Date</TableHead>
                           <TableHead>Person</TableHead>
                           <TableHead>Type</TableHead>
@@ -1963,11 +2766,30 @@ export default function HistoryPage() {
                               </Badge>
                             </TableCell>
                             <TableCell className="text-right tabular-nums font-medium">
-                              PHP {formatPHP(Number(b.amount))}
+                              <div>PHP {formatPHP(Number(b.amount))}</div>
+                              {b.type === 'borrowed' && (
+                                <div className="text-[10px] text-muted-foreground font-normal mt-0.5">
+                                  Spent: PHP {formatPHP(b.totalSpent)}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="text-center">
-                              <Badge variant={b.is_settled ? 'secondary' : 'outline'} className={cn('text-[10px]', b.is_settled && 'bg-emerald-500/10 text-emerald-500')}>
-                                {b.is_settled ? 'Settled' : 'Active'}
+                              <Badge 
+                                variant={b.is_settled ? 'secondary' : 'outline'} 
+                                className={cn(
+                                  'text-[10px]', 
+                                  b.is_settled 
+                                    ? b.is_gifted 
+                                      ? 'bg-amber-500/10 text-amber-500 border-none' 
+                                      : 'bg-emerald-500/10 text-emerald-500'
+                                    : ''
+                                )}
+                              >
+                                {b.is_settled 
+                                  ? b.is_gifted 
+                                    ? b.type === 'borrowed' ? 'Gift / Free' : 'Forgiven' 
+                                    : 'Settled' 
+                                  : 'Active'}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{b.description ?? '-'}</TableCell>
@@ -1975,6 +2797,7 @@ export default function HistoryPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -1994,12 +2817,16 @@ export default function HistoryPage() {
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart
                             data={(() => {
-                              const monthMap = new Map<string, { borrowed: number; lent: number }>();
+                              const monthMap = new Map<string, { borrowed: number; lent: number; spent: number }>();
                               for (const b of borrowingHistory) {
                                 const m = b.transaction_date.substring(0, 7);
-                                const entry = monthMap.get(m) ?? { borrowed: 0, lent: 0 };
-                                if (b.type === 'borrowed') entry.borrowed += Number(b.amount);
-                                else entry.lent += Number(b.amount);
+                                const entry = monthMap.get(m) ?? { borrowed: 0, lent: 0, spent: 0 };
+                                if (b.type === 'borrowed') {
+                                  entry.borrowed += Number(b.amount);
+                                  entry.spent += b.totalSpent || 0;
+                                } else {
+                                  entry.lent += Number(b.amount);
+                                }
                                 monthMap.set(m, entry);
                               }
                               return Array.from(monthMap.entries())
@@ -2009,12 +2836,16 @@ export default function HistoryPage() {
                                   ...v,
                                 }));
                             })()}
-                            margin={{ top: 8, right: 20, left: 0, bottom: 0 }}
+                            margin={{ top: 8, right: 20, left: 10, bottom: 0 }}
                           >
                             <defs>
                               <linearGradient id="borrowedGradient" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.9} />
                                 <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.6} />
+                              </linearGradient>
+                              <linearGradient id="borrowingSpentGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.9} />
+                                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.6} />
                               </linearGradient>
                               <linearGradient id="lentGradient" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="0%" stopColor="#34d399" stopOpacity={0.9} />
@@ -2029,6 +2860,7 @@ export default function HistoryPage() {
                               tickLine={false}
                             />
                             <YAxis
+                              width={45}
                               tick={{ fontSize: 11, fill: '#94a3b8' }}
                               axisLine={false}
                               tickLine={false}
@@ -2037,17 +2869,25 @@ export default function HistoryPage() {
                             <Tooltip
                               content={({ active, payload }) => {
                                 if (!active || !payload?.length) return null;
-                                const borrowed = payload[0]?.value as number ?? 0;
-                                const lent = payload[1]?.value as number ?? 0;
+                                const data = payload[0]?.payload;
+                                const borrowed = data?.borrowed ?? 0;
+                                const spent = data?.spent ?? 0;
+                                const lent = data?.lent ?? 0;
                                 const net = lent - borrowed;
                                 return (
                                   <div className="rounded-lg border border-border/50 bg-card/95 backdrop-blur-md shadow-xl p-3 space-y-1.5">
-                                    <p className="text-xs font-semibold text-foreground">{payload[0]?.payload?.month}</p>
+                                    <p className="text-xs font-semibold text-foreground">{data?.month}</p>
                                     <div className="space-y-1">
                                       <div className="flex items-center justify-between gap-6 text-xs">
                                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-400" /> Borrowed</span>
                                         <span className="tabular-nums font-medium">PHP {formatPHP(borrowed)}</span>
                                       </div>
+                                      {borrowed > 0 && (
+                                        <div className="flex items-center justify-between gap-6 text-xs pl-3.5">
+                                          <span className="text-muted-foreground flex items-center gap-1">↳ Spent</span>
+                                          <span className="tabular-nums font-medium text-amber-500">PHP {formatPHP(spent)}</span>
+                                        </div>
+                                      )}
                                       <div className="flex items-center justify-between gap-6 text-xs">
                                         <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Lent</span>
                                         <span className="tabular-nums font-medium">PHP {formatPHP(lent)}</span>
@@ -2068,8 +2908,9 @@ export default function HistoryPage() {
                               cursor={{ fill: '#94a3b8', opacity: 0.05 }}
                               wrapperStyle={{ outline: 'none', zIndex: 50 }}
                             />
-                            <Bar dataKey="borrowed" fill="url(#borrowedGradient)" radius={[6, 6, 0, 0]} barSize={28} name="Borrowed" />
-                            <Bar dataKey="lent" fill="url(#lentGradient)" radius={[6, 6, 0, 0]} barSize={28} name="Lent" />
+                            <Bar dataKey="borrowed" fill="url(#borrowedGradient)" radius={[6, 6, 0, 0]} barSize={18} name="Borrowed" />
+                            <Bar dataKey="spent" fill="url(#borrowingSpentGradient)" radius={[6, 6, 0, 0]} barSize={18} name="Spent" />
+                            <Bar dataKey="lent" fill="url(#lentGradient)" radius={[6, 6, 0, 0]} barSize={18} name="Lent" />
                             <Legend
                               iconType="circle"
                               iconSize={8}

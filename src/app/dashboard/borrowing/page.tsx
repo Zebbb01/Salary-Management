@@ -28,8 +28,22 @@ import {
   ChevronRight,
   Receipt,
   Loader2,
+  Info,
+  Gift,
+  CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   getCurrentUser,
   getBorrowings,
@@ -116,36 +130,95 @@ interface SummaryCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  colorClass: string;
+  colorTheme: 'rose' | 'emerald' | 'teal' | 'amber' | 'sky';
   subtitle?: string;
 }
 
-function SummaryCard({ label, value, icon: Icon, colorClass, subtitle }: SummaryCardProps) {
+function SummaryCard({ label, value, icon: Icon, colorTheme, subtitle }: SummaryCardProps) {
+  const themeClasses = {
+    rose: {
+      accent: 'bg-rose-500',
+      glow: 'from-rose-500/10 via-rose-500/5 to-transparent',
+      cardBg: 'from-card via-card to-rose-950/15',
+      iconColor: 'text-rose-500/5 dark:text-rose-400/5 group-hover:text-rose-500/10 dark:group-hover:text-rose-400/10',
+    },
+    emerald: {
+      accent: 'bg-emerald-500',
+      glow: 'from-emerald-500/10 via-emerald-500/5 to-transparent',
+      cardBg: 'from-card via-card to-emerald-950/15',
+      iconColor: 'text-emerald-500/5 dark:text-emerald-400/5 group-hover:text-emerald-500/10 dark:group-hover:text-emerald-400/10',
+    },
+    teal: {
+      accent: 'bg-teal-500',
+      glow: 'from-teal-500/10 via-teal-500/5 to-transparent',
+      cardBg: 'from-card via-card to-teal-950/15',
+      iconColor: 'text-teal-500/5 dark:text-teal-400/5 group-hover:text-teal-500/10 dark:group-hover:text-teal-400/10',
+    },
+    amber: {
+      accent: 'bg-amber-500',
+      glow: 'from-amber-500/10 via-amber-500/5 to-transparent',
+      cardBg: 'from-card via-card to-amber-950/15',
+      iconColor: 'text-amber-500/5 dark:text-amber-400/5 group-hover:text-amber-500/10 dark:group-hover:text-amber-400/10',
+    },
+    sky: {
+      accent: 'bg-sky-500',
+      glow: 'from-sky-500/10 via-sky-500/5 to-transparent',
+      cardBg: 'from-card via-card to-sky-950/15',
+      iconColor: 'text-sky-500/5 dark:text-sky-400/5 group-hover:text-sky-500/10 dark:group-hover:text-sky-400/10',
+    },
+  }[colorTheme];
+
   return (
     <motion.div variants={staggerItem} className="h-full">
-      <Card className="overflow-hidden transition-shadow duration-200 hover:shadow-md h-full">
-        <CardContent className="pt-5 pb-5 h-full flex flex-col justify-between">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{label}</span>
-              <span className="text-lg font-semibold text-foreground whitespace-nowrap">
-                <AnimatedNumber value={value} prefix="PHP " />
-              </span>
-            </div>
-            <div
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-                colorClass
-              )}
-            >
-              <Icon className="h-4 w-4" />
-            </div>
+      <Card className={cn(
+        "group relative overflow-hidden border border-border/40 bg-gradient-to-br backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:border-border/80 h-full",
+        themeClasses.cardBg
+      )}>
+        {/* Top Accent Line */}
+        <div className={cn(
+          "absolute top-0 left-0 right-0 h-[2px] opacity-35 group-hover:opacity-100 transition-opacity duration-300",
+          themeClasses.accent
+        )} />
+
+        {/* Dotted Grid Background */}
+        <div 
+          className="absolute inset-0 opacity-[0.03] dark:opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.05] dark:group-hover:opacity-[0.09] pointer-events-none"
+          style={{
+            backgroundImage: 'radial-gradient(circle, var(--foreground) 1px, transparent 1px)',
+            backgroundSize: '12px 12px',
+          }}
+        />
+
+        {/* Glow backdrop effect */}
+        <div className={cn(
+          "absolute -right-8 -top-8 h-20 w-20 rounded-full bg-gradient-to-br blur-2xl opacity-10 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none",
+          themeClasses.glow
+        )} />
+        
+        {/* Large watermark icon in the background */}
+        <div className={cn(
+          "absolute -right-6 -bottom-6 transition-all duration-500 transform rotate-12 group-hover:scale-110 group-hover:rotate-[15deg] pointer-events-none",
+          themeClasses.iconColor
+        )}>
+          <Icon className="h-28 w-28 stroke-[1.2]" />
+        </div>
+
+        <CardContent className="p-3.5 sm:p-5 h-full flex flex-col justify-between gap-3 relative z-10">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[9px] sm:text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              {label}
+            </span>
           </div>
-          {subtitle && (
-            <div className="mt-1.5 min-h-[18px]">
-              <p className="text-[11px] text-muted-foreground">{subtitle}</p>
-            </div>
-          )}
+
+          <div>
+            <p className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-foreground font-display tracking-tight flex items-baseline">
+              <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground/60 mr-1">PHP</span>
+              <AnimatedNumber value={value} />
+            </p>
+            {subtitle && (
+              <p className="text-[10px] sm:text-[11px] text-muted-foreground mt-1">{subtitle}</p>
+            )}
+          </div>
         </CardContent>
       </Card>
     </motion.div>
@@ -208,7 +281,10 @@ function EmptyBorrowings() {
 // ============================================
 
 type TabFilter = 'all' | 'borrowed' | 'lent';
-type PendingAction = { type: 'settle' | 'delete'; borrowing: Borrowing } | null;
+type PendingAction =
+  | { type: 'settle'; borrowing: Borrowing; isGifted: boolean }
+  | { type: 'delete'; borrowing: Borrowing }
+  | null;
 
 export default function BorrowingPage() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -335,14 +411,17 @@ export default function BorrowingPage() {
   // SETTLE / UNSETTLE / DELETE
   // ----------------------------------------
 
-  async function handleSettle(borrowing: Borrowing) {
+  async function handleSettle(borrowing: Borrowing, isGifted = false) {
     try {
-      const updated = await settleBorrowing(borrowing.id);
+      const updated = await settleBorrowing(borrowing.id, isGifted);
       setActiveBorrowings((prev) => prev.filter((b) => b.id !== borrowing.id));
       setSettledBorrowings((prev) => [updated, ...prev]);
       const newSummary = await getBorrowingSummary();
       setSummary(newSummary);
-      toast.success(`Settled with ${borrowing.person_name}`);
+      toast.success(isGifted 
+        ? (borrowing.type === 'borrowed' ? `Marked as Gift/Free` : `Forgave loan to ${borrowing.person_name}`)
+        : `Settled with ${borrowing.person_name}`
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to settle';
       toast.error(message);
@@ -381,7 +460,7 @@ export default function BorrowingPage() {
   async function handleConfirmAction() {
     if (!pendingAction) return;
     if (pendingAction.type === 'settle') {
-      await handleSettle(pendingAction.borrowing);
+      await handleSettle(pendingAction.borrowing, false);
     } else {
       await handleDelete(pendingAction.borrowing);
     }
@@ -478,6 +557,11 @@ export default function BorrowingPage() {
     { value: 'lent', label: `I Lent (${activeBorrowings.filter((b) => b.type === 'lent').length})` },
   ];
 
+  const debtTotal = summary.totalBorrowed + summary.totalLent || 1;
+  const borrowedPct = Math.min((summary.totalBorrowed / debtTotal) * 100, 100);
+  const lentPct = Math.min((summary.totalLent / debtTotal) * 100, 100);
+  const hasDebts = summary.totalBorrowed > 0 || summary.totalLent > 0;
+
   return (
     <motion.div
       variants={staggerContainer}
@@ -503,31 +587,27 @@ export default function BorrowingPage() {
         variants={staggerContainer}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-1 gap-4 sm:grid-cols-3"
+        className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4"
       >
         <SummaryCard
           label="I Owe"
           value={summary.totalBorrowed}
           icon={ArrowDownLeft}
-          colorClass="bg-rose-500/10 text-rose-500"
+          colorTheme="rose"
           subtitle="Total borrowed from others"
         />
         <SummaryCard
           label="Owed To Me"
           value={summary.totalLent}
           icon={ArrowUpRight}
-          colorClass="bg-emerald-500/10 text-emerald-500"
+          colorTheme="emerald"
           subtitle="Total lent to others"
         />
         <SummaryCard
           label="Net Position"
           value={Math.abs(summary.netPosition)}
           icon={Scale}
-          colorClass={cn(
-            summary.netPosition >= 0
-              ? 'bg-emerald-500/10 text-emerald-500'
-              : 'bg-rose-500/10 text-rose-500'
-          )}
+          colorTheme={summary.netPosition >= 0 ? 'emerald' : 'rose'}
           subtitle={
             summary.netPosition > 0
               ? 'Others owe you more'
@@ -536,21 +616,100 @@ export default function BorrowingPage() {
                 : 'All balanced'
           }
         />
+        <SummaryCard
+          label="Forgiven / Gifted"
+          value={settledBorrowings
+            .filter((b) => b.is_gifted)
+            .reduce((sum, b) => sum + Number(b.amount), 0)}
+          icon={Gift}
+          colorTheme="amber"
+          subtitle="Written off or received as gifts"
+        />
       </motion.div>
 
-      {/* Add New Borrowing Form */}
-      <motion.div variants={staggerItem}>
-        <Card>
+      {/* Side-by-side form and active list on desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        {/* Left Column: Balance Ratio and Form */}
+        <div className="lg:col-span-5 space-y-6 flex flex-col">
+          {/* Debt Balance Ratio Card */}
+          <motion.div variants={staggerItem}>
+            <Card className="border border-border/50 bg-card/60 backdrop-blur-sm shadow-md overflow-hidden">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <Scale className="h-4 w-4 text-muted-foreground" />
+                    <CardTitle className="flex items-center gap-2">Debt & Lending Balance</CardTitle>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    Net Position: <span className={cn("font-semibold", summary.netPosition >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                      PHP {formatPHP(Math.abs(summary.netPosition))} {summary.netPosition > 0 ? '(Owed to Me)' : summary.netPosition < 0 ? '(I Owe)' : '(Balanced)'}
+                    </span>
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  {hasDebts ? (
+                    <>
+                      <div className="h-3 w-full flex overflow-hidden rounded-full bg-muted/60 border border-border/10 shadow-inner">
+                        <div 
+                          className="h-full bg-rose-500/95 transition-all duration-500" 
+                          style={{ width: `${borrowedPct}%` }}
+                          title={`I Owe: ${borrowedPct.toFixed(1)}%`}
+                        />
+                        <div 
+                          className="h-full bg-emerald-500/95 transition-all duration-500" 
+                          style={{ width: `${lentPct}%` }}
+                          title={`Owed to Me: ${lentPct.toFixed(1)}%`}
+                        />
+                      </div>
+                      
+                      <div className="flex items-center justify-between text-[10px] text-muted-foreground font-medium px-0.5">
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                          I Owe: {borrowedPct.toFixed(1)}% (PHP {formatPHP(summary.totalBorrowed)})
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          Owed to Me: {lentPct.toFixed(1)}% (PHP {formatPHP(summary.totalLent)})
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-9 w-full flex items-center justify-center rounded-lg bg-muted/30 border border-border/30 border-dashed text-xs text-muted-foreground">
+                      No active borrowings or lendings found. Your account is fully balanced!
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Add New Borrowing Form */}
+          <motion.div variants={staggerItem} className="flex-1 flex flex-col">
+            <Card className="flex-1 flex flex-col h-full">
           <CardHeader>
             <div className="flex items-center gap-2">
               <Plus className="h-4 w-4 text-muted-foreground" />
-              <CardTitle>Add New Entry</CardTitle>
+              <CardTitle className="flex items-center gap-2">Add New Entry
+                <TooltipProvider>
+                  <UITooltip>
+                    <TooltipTrigger className="flex">
+                      <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      Log a new borrowing or owed amount
+                    </TooltipContent>
+                  </UITooltip>
+                </TooltipProvider>
+              </CardTitle>
             </div>
             <CardDescription>Record money borrowed or lent</CardDescription>
           </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAdd} className="space-y-4">
-              {/* Type Selector */}
+          <CardContent className="flex-1 flex flex-col">
+            <form onSubmit={handleAdd} className="space-y-4 flex-1 flex flex-col justify-between">
+              <div className="space-y-4">
+                {/* Type Selector */}
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Type</Label>
                 <div className="flex gap-2">
@@ -641,6 +800,7 @@ export default function BorrowingPage() {
                   />
                 </div>
               </div>
+              </div>
 
               <Button
                 type="submit"
@@ -652,18 +812,32 @@ export default function BorrowingPage() {
               </Button>
             </form>
           </CardContent>
-        </Card>
-      </motion.div>
+            </Card>
+          </motion.div>
+        </div>
 
-      {/* Active Borrowings */}
-      <motion.div variants={staggerItem}>
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Handshake className="h-4 w-4 text-muted-foreground" />
-                <CardTitle>Active Borrowings</CardTitle>
-              </div>
+        {/* Right Column: Active List */}
+        <div className="lg:col-span-7 flex flex-col">
+          {/* Active Borrowings */}
+          <motion.div variants={staggerItem} className="flex-1 flex flex-col">
+            <Card className="flex-1 flex flex-col h-full">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Handshake className="h-4 w-4 text-muted-foreground" />
+                    <CardTitle className="flex items-center gap-2">Active Borrowings
+                      <TooltipProvider>
+                        <UITooltip>
+                          <TooltipTrigger className="flex">
+                            <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            Current active balances that need to be settled
+                          </TooltipContent>
+                        </UITooltip>
+                      </TooltipProvider>
+                    </CardTitle>
+                  </div>
               {summary.activeCount > 0 && (
                 <Badge variant="secondary" className="tabular-nums">
                   {summary.activeCount} active
@@ -672,7 +846,7 @@ export default function BorrowingPage() {
             </div>
             <CardDescription>Unsettled borrowings and lendings</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 flex-1 flex flex-col">
             {/* Tab Filter */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               {tabOptions.map((tab) => (
@@ -785,15 +959,67 @@ export default function BorrowingPage() {
 
                         {/* Actions */}
                         <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            className="h-7 px-2 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400 dark:hover:text-emerald-300"
-                            onClick={() => setPendingAction({ type: 'settle', borrowing })}
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                            Settle
-                          </Button>
+                          {/* Settle dropdown */}
+                          <Popover>
+                            <PopoverTrigger
+                              className="inline-flex h-7 items-center gap-1 rounded px-2 text-xs font-medium text-emerald-600 transition-colors hover:bg-emerald-500/10 hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:text-emerald-400 dark:hover:text-emerald-300"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Settle
+                              <ChevronDown className="h-3 w-3 opacity-60" />
+                            </PopoverTrigger>
+                            <PopoverContent
+                              side="bottom"
+                              align="end"
+                              sideOffset={6}
+                              className="w-64 p-1.5"
+                            >
+                              <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                How was this settled?
+                              </p>
+                              <button
+                                className="flex w-full items-start gap-3 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-emerald-500/10 focus:outline-none focus-visible:bg-emerald-500/10"
+                                onClick={() =>
+                                  setPendingAction({ type: 'settle', borrowing, isGifted: false })
+                                }
+                              >
+                                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                                  <CreditCard className="h-3.5 w-3.5" />
+                                </span>
+                                <span>
+                                  <span className="block text-xs font-semibold text-foreground">
+                                    Settle as Paid
+                                  </span>
+                                  <span className="block text-[11px] text-muted-foreground mt-0.5">
+                                    {borrowing.type === 'borrowed'
+                                      ? 'You paid back the money normally'
+                                      : 'The person paid you back'}
+                                  </span>
+                                </span>
+                              </button>
+                              <button
+                                className="flex w-full items-start gap-3 rounded-md px-2 py-2.5 text-left transition-colors hover:bg-amber-500/10 focus:outline-none focus-visible:bg-amber-500/10"
+                                onClick={() =>
+                                  setPendingAction({ type: 'settle', borrowing, isGifted: true })
+                                }
+                              >
+                                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                  <Gift className="h-3.5 w-3.5" />
+                                </span>
+                                <span>
+                                  <span className="block text-xs font-semibold text-foreground">
+                                    {borrowing.type === 'borrowed' ? 'Mark as Gift / Free' : 'Forgive the Loan'}
+                                  </span>
+                                  <span className="block text-[11px] text-muted-foreground mt-0.5">
+                                    {borrowing.type === 'borrowed'
+                                      ? 'Forgiven — no repayment needed'
+                                      : 'You are writing off the debt'}
+                                  </span>
+                                </span>
+                              </button>
+                            </PopoverContent>
+                          </Popover>
+
                           <Button
                             variant="ghost"
                             size="xs"
@@ -978,6 +1204,8 @@ export default function BorrowingPage() {
           </CardContent>
         </Card>
       </motion.div>
+        </div>
+      </div>
 
       {/* Settled History */}
       {settledBorrowings.length > 0 && (
@@ -990,7 +1218,18 @@ export default function BorrowingPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-                  <CardTitle>Settled History</CardTitle>
+                  <CardTitle className="flex items-center gap-2">Settled History
+                    <TooltipProvider>
+                      <UITooltip>
+                        <TooltipTrigger className="flex">
+                          <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Past settled borrowing records
+                        </TooltipContent>
+                      </UITooltip>
+                    </TooltipProvider>
+                  </CardTitle>
                   <Badge variant="secondary" className="tabular-nums text-[10px]">
                     {settledBorrowings.length}
                   </Badge>
@@ -1043,6 +1282,11 @@ export default function BorrowingPage() {
                             >
                               {borrowing.type === 'borrowed' ? 'Borrowed' : 'Lent'}
                             </Badge>
+                            {borrowing.is_gifted && (
+                              <Badge className="text-[10px] py-0 bg-amber-500/15 text-amber-600 dark:text-amber-400 border-none">
+                                {borrowing.type === 'borrowed' ? 'Gift / Free' : 'Forgiven'}
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-[11px] text-muted-foreground/60 tabular-nums">
@@ -1114,15 +1358,21 @@ export default function BorrowingPage() {
               )}
             </div>
             <h2 className="mt-3 text-base font-semibold text-foreground">
-              {pendingAction?.type === 'settle' ? 'Settle this entry?' : 'Delete this entry?'}
+              {pendingAction?.type === 'settle'
+                ? pendingAction.isGifted
+                  ? pendingAction.borrowing.type === 'borrowed'
+                    ? 'Mark as Gift / Free?'
+                    : 'Forgive this loan?'
+                  : 'Confirm Settled as Paid?'
+                : 'Delete this entry?'}
             </h2>
             <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed max-w-[260px]">
               {pendingAction?.type === 'settle'
-                ? `This will mark the ${
-                    pendingAction.borrowing.type === 'borrowed' ? 'borrowing from' : 'lending to'
-                  } "${pendingAction.borrowing.person_name}" (PHP ${formatPHP(
-                    pendingAction.borrowing.amount
-                  )}) as settled.`
+                ? pendingAction.isGifted
+                  ? pendingAction.borrowing.type === 'borrowed'
+                    ? `"${pendingAction.borrowing.person_name}" gifted you PHP ${formatPHP(pendingAction.borrowing.amount)}. No repayment will be tracked.`
+                    : `You are forgiving PHP ${formatPHP(pendingAction.borrowing.amount)} owed by "${pendingAction.borrowing.person_name}". This cannot be undone.`
+                  : `Marking PHP ${formatPHP(pendingAction.borrowing.amount)} with "${pendingAction.borrowing.person_name}" as fully paid and settled.`
                 : pendingAction
                   ? `This will permanently delete the entry for "${pendingAction.borrowing.person_name}" (PHP ${formatPHP(
                       pendingAction.borrowing.amount
@@ -1132,16 +1382,33 @@ export default function BorrowingPage() {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmAction}
-              className={cn(
-                pendingAction?.type === 'delete'
-                  ? 'bg-rose-600 text-white shadow-sm hover:bg-rose-500'
-                  : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-500'
-              )}
-            >
-              {pendingAction?.type === 'settle' ? 'Settle' : 'Delete'}
-            </AlertDialogAction>
+            {pendingAction?.type === 'settle' ? (
+              <AlertDialogAction
+                onClick={async () => {
+                  await handleSettle(pendingAction.borrowing, pendingAction.isGifted);
+                  setPendingAction(null);
+                }}
+                className={cn(
+                  'text-white shadow-sm',
+                  pendingAction.isGifted
+                    ? 'bg-amber-600 hover:bg-amber-500'
+                    : 'bg-emerald-600 hover:bg-emerald-500'
+                )}
+              >
+                {pendingAction.isGifted
+                  ? pendingAction.borrowing.type === 'borrowed'
+                    ? 'Yes, Mark as Gift'
+                    : 'Yes, Forgive Loan'
+                  : 'Yes, Settle as Paid'}
+              </AlertDialogAction>
+            ) : (
+              <AlertDialogAction
+                onClick={handleConfirmAction}
+                className="bg-rose-600 hover:bg-rose-500 text-white shadow-sm"
+              >
+                Delete
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

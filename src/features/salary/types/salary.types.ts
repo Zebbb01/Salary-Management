@@ -207,6 +207,8 @@ export interface FinancialSummary {
   totalBorrowingExpensesSpent: number;
   // Consumable totals
   totalConsumableSpent: number;
+  giftedIncome: number;
+  forgivenLent: number;
 }
 
 // Borrowing / Lending record
@@ -221,6 +223,7 @@ export interface Borrowing {
   description: string | null;
   transaction_date: string;
   is_settled: boolean;
+  is_gifted: boolean;
   settled_at: string | null;
   pay_period_id: string | null;
   created_at: string;

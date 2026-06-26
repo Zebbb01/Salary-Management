@@ -659,6 +659,25 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     }
   }
 
+  // Fetch gifted (forgiven) borrowings
+  let giftedIncome = 0;
+  let forgivenLent = 0;
+  let gQuery = supabase
+    .from('borrowings')
+    .select('type, amount')
+    .eq('is_gifted', true);
+
+  if (opts?.dateFrom) gQuery = gQuery.gte('settled_at', opts.dateFrom);
+  if (opts?.dateTo) gQuery = gQuery.lte('settled_at', opts.dateTo);
+
+  const { data: giftedData } = await gQuery;
+  if (giftedData) {
+    for (const b of giftedData) {
+      if (b.type === 'borrowed') giftedIncome += Number(b.amount ?? 0);
+      else if (b.type === 'lent') forgivenLent += Number(b.amount ?? 0);
+    }
+  }
+
   // Fetch consumable expenses total for the date range
   let totalConsumableSpent = 0;
   {
@@ -698,6 +717,8 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     totalLent,
     totalBorrowingExpensesSpent,
     totalConsumableSpent,
+    giftedIncome,
+    forgivenLent,
   };
 }
 
@@ -856,10 +877,10 @@ export async function createBorrowing(
   return data;
 }
 
-export async function settleBorrowing(id: string): Promise<Borrowing> {
+export async function settleBorrowing(id: string, isGifted = false): Promise<Borrowing> {
   const { data, error } = await supabase
     .from('borrowings')
-    .update({ is_settled: true, settled_at: new Date().toISOString() })
+    .update({ is_settled: true, is_gifted: isGifted, settled_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single();
@@ -871,7 +892,7 @@ export async function settleBorrowing(id: string): Promise<Borrowing> {
 export async function unsettleBorrowing(id: string): Promise<Borrowing> {
   const { data, error } = await supabase
     .from('borrowings')
-    .update({ is_settled: false, settled_at: null })
+    .update({ is_settled: false, is_gifted: false, settled_at: null })
     .eq('id', id)
     .select()
     .single();
@@ -1210,3 +1231,18 @@ export async function getBorrowingsHistory(
   if (error) throw error;
   return data ?? [];
 }
+
+/** Get recent consumable expenses for a user across all months */
+export async function getConsumableExpensesByUser(
+  limit = 100
+): Promise<ConsumableExpense[]> {
+  const { data, error } = await supabase
+    .from('consumable_expenses')
+    .select('*')
+    .order('expense_date', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return data ?? [];
+}
+

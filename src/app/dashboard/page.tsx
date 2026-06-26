@@ -161,19 +161,19 @@ interface StatCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  colorClass: string;
+  colorTheme: 'indigo' | 'sky' | 'teal' | 'rose' | 'amber' | 'purple';
   index: number;
   editable?: boolean;
   onSave?: (value: number) => void;
   subtitle?: string;
-  tooltip?: string;
+  tooltip?: React.ReactNode;
 }
 
 function StatCard({
   label,
   value,
   icon: Icon,
-  colorClass,
+  colorTheme,
   index,
   editable,
   onSave,
@@ -183,6 +183,45 @@ function StatCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const themeClasses = {
+    indigo: {
+      accent: 'bg-indigo-500',
+      glow: 'from-indigo-500/10 via-indigo-500/5 to-transparent',
+      cardBg: 'from-card via-card to-indigo-950/15',
+      iconColor: 'text-indigo-500/5 dark:text-indigo-400/5 group-hover:text-indigo-500/10 dark:group-hover:text-indigo-400/10',
+    },
+    sky: {
+      accent: 'bg-sky-500',
+      glow: 'from-sky-500/10 via-sky-500/5 to-transparent',
+      cardBg: 'from-card via-card to-sky-950/15',
+      iconColor: 'text-sky-500/5 dark:text-sky-400/5 group-hover:text-sky-500/10 dark:group-hover:text-sky-400/10',
+    },
+    teal: {
+      accent: 'bg-teal-500',
+      glow: 'from-teal-500/10 via-teal-500/5 to-transparent',
+      cardBg: 'from-card via-card to-teal-950/15',
+      iconColor: 'text-teal-500/5 dark:text-teal-400/5 group-hover:text-teal-500/10 dark:group-hover:text-teal-400/10',
+    },
+    rose: {
+      accent: 'bg-rose-500',
+      glow: 'from-rose-500/10 via-rose-500/5 to-transparent',
+      cardBg: 'from-card via-card to-rose-950/15',
+      iconColor: 'text-rose-500/5 dark:text-rose-400/5 group-hover:text-rose-500/10 dark:group-hover:text-rose-400/10',
+    },
+    amber: {
+      accent: 'bg-amber-500',
+      glow: 'from-amber-500/10 via-amber-500/5 to-transparent',
+      cardBg: 'from-card via-card to-amber-950/15',
+      iconColor: 'text-amber-500/5 dark:text-amber-400/5 group-hover:text-amber-500/10 dark:group-hover:text-amber-400/10',
+    },
+    purple: {
+      accent: 'bg-purple-500',
+      glow: 'from-purple-500/10 via-purple-500/5 to-transparent',
+      cardBg: 'from-card via-card to-purple-950/15',
+      iconColor: 'text-purple-500/5 dark:text-purple-400/5 group-hover:text-purple-500/10 dark:group-hover:text-purple-400/10',
+    },
+  }[colorTheme];
 
   function handleStartEdit() {
     if (!editable) return;
@@ -211,65 +250,88 @@ function StatCard({
     <motion.div variants={staggerItem} className="h-full">
       <Card
         className={cn(
-          'overflow-hidden transition-shadow duration-200 hover:shadow-md h-full',
+          'group relative overflow-hidden border border-border/40 bg-gradient-to-br backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:border-border/80 h-full',
+          themeClasses.cardBg,
           editable && 'cursor-pointer'
         )}
         onClick={handleStartEdit}
       >
-        <CardContent className="pt-5 pb-5 h-full flex flex-col justify-between">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                {label}
-                {tooltip && (
-                  <TooltipProvider>
-                    <UITooltip>
-                      <TooltipTrigger>
-                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
-                        {tooltip}
-                      </TooltipContent>
-                    </UITooltip>
-                  </TooltipProvider>
-                )}
-              </span>
-              {isEditing ? (
-                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  <span className="text-sm text-muted-foreground">PHP</span>
-                  <Input
-                    ref={inputRef}
-                    type="number"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onBlur={handleSave}
-                    onKeyDown={handleKeyDown}
-                    className="w-28 text-lg font-semibold tabular-nums font-display"
-                    min={0}
-                    step={100}
-                  />
-                </div>
-              ) : (
-                <span className="text-lg font-semibold text-foreground whitespace-nowrap">
-                  <AnimatedNumber value={value} prefix="PHP " />
-                </span>
+        {/* Top Accent Line */}
+        <div className={cn(
+          "absolute top-0 left-0 right-0 h-[2px] opacity-35 group-hover:opacity-100 transition-opacity duration-300",
+          themeClasses.accent
+        )} />
+
+        {/* Dotted Grid Background */}
+        <div
+          className="absolute inset-0 opacity-[0.03] dark:opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.05] dark:group-hover:opacity-[0.09] pointer-events-none"
+          style={{
+            backgroundImage: 'radial-gradient(circle, var(--foreground) 1px, transparent 1px)',
+            backgroundSize: '12px 12px',
+          }}
+        />
+
+        {/* Glow backdrop effect */}
+        <div className={cn(
+          "absolute -right-8 -top-8 h-20 w-20 rounded-full bg-gradient-to-br blur-2xl opacity-10 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none",
+          themeClasses.glow
+        )} />
+
+        {/* Large watermark icon in the background */}
+        <div className={cn(
+          "absolute -right-6 -bottom-6 transition-all duration-500 transform rotate-12 group-hover:scale-110 group-hover:rotate-[15deg] pointer-events-none",
+          themeClasses.iconColor
+        )}>
+          <Icon className="h-28 w-28 stroke-[1.2]" />
+        </div>
+
+        <CardContent className="p-3.5 sm:p-5 h-full flex flex-col justify-between gap-3 relative z-10">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[9px] sm:text-xs font-semibold tracking-wider text-muted-foreground uppercase flex items-center gap-1">
+              {label}
+              {editable && !isEditing && (
+                <span className="text-[8px] sm:text-[10px] font-normal normal-case tracking-normal text-muted-foreground/50">(click to edit)</span>
               )}
-            </div>
-            <div
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-                colorClass
-              )}
-            >
-              <Icon className="h-4 w-4" />
-            </div>
+            </span>
+
+            {tooltip && (
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex shrink-0">
+                    <Info className="h-3.5 w-3.5 text-muted-foreground/35 hover:text-muted-foreground/75 cursor-help transition-colors" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
+                    {tooltip}
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            )}
           </div>
-          <div className="mt-1.5 min-h-[18px]">
-            {editable && !isEditing && (
-              <p className="text-[11px] text-muted-foreground">Click to edit</p>
+
+          <div className="mt-1 sm:mt-2">
+            {isEditing ? (
+              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground/60">PHP</span>
+                <Input
+                  ref={inputRef}
+                  type="number"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={handleSave}
+                  onKeyDown={handleKeyDown}
+                  className="w-28 text-sm sm:text-base md:text-lg lg:text-xl font-bold tabular-nums font-display bg-transparent border-border/60"
+                  min={0}
+                  step={100}
+                />
+              </div>
+            ) : (
+              <p className="text-sm sm:text-base md:text-lg lg:text-xl font-bold text-foreground font-display tracking-tight flex items-baseline">
+                <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground/60 mr-1">PHP</span>
+                <AnimatedNumber value={value} />
+              </p>
             )}
             {subtitle && !isEditing && (
-              <p className="text-[11px] text-muted-foreground">{subtitle}</p>
+              <p className="text-[10px] sm:text-[11px] text-muted-foreground/60 mt-1">{subtitle}</p>
             )}
           </div>
         </CardContent>
@@ -286,44 +348,98 @@ interface OverviewCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  gradientClass: string;
-  tooltip?: string;
+  colorTheme: 'teal' | 'emerald' | 'violet' | 'rose';
+  tooltip?: React.ReactNode;
 }
 
-function OverviewCard({ label, value, icon: Icon, gradientClass, tooltip }: OverviewCardProps) {
+function OverviewCard({ label, value, icon: Icon, colorTheme, tooltip }: OverviewCardProps) {
+  const themeClasses = {
+    teal: {
+      accent: 'bg-teal-500',
+      glow: 'from-teal-500/10 via-teal-500/5 to-transparent',
+      cardBg: 'from-card via-card to-teal-950/15',
+      iconColor: 'text-teal-500/5 dark:text-teal-400/5 group-hover:text-teal-500/10 dark:group-hover:text-teal-400/10',
+    },
+    emerald: {
+      accent: 'bg-emerald-500',
+      glow: 'from-emerald-500/10 via-emerald-500/5 to-transparent',
+      cardBg: 'from-card via-card to-emerald-950/15',
+      iconColor: 'text-emerald-500/5 dark:text-emerald-400/5 group-hover:text-emerald-500/10 dark:group-hover:text-emerald-400/10',
+    },
+    violet: {
+      accent: 'bg-violet-500',
+      glow: 'from-violet-500/10 via-violet-500/5 to-transparent',
+      cardBg: 'from-card via-card to-violet-950/15',
+      iconColor: 'text-violet-500/5 dark:text-violet-400/5 group-hover:text-violet-500/10 dark:group-hover:text-violet-400/10',
+    },
+    rose: {
+      accent: 'bg-rose-500',
+      glow: 'from-rose-500/10 via-rose-500/5 to-transparent',
+      cardBg: 'from-card via-card to-rose-950/15',
+      iconColor: 'text-rose-500/5 dark:text-rose-400/5 group-hover:text-rose-500/10 dark:group-hover:text-rose-400/10',
+    },
+  }[colorTheme];
+
   return (
     <motion.div variants={staggerItem} className="h-full">
-      <Card className="overflow-hidden transition-shadow duration-200 hover:shadow-md h-full">
-        <CardContent className="pt-5 pb-5 h-full flex flex-col justify-between">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                {label}
-                {tooltip && (
-                  <TooltipProvider>
-                    <UITooltip>
-                      <TooltipTrigger>
-                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
-                        {tooltip}
-                      </TooltipContent>
-                    </UITooltip>
-                  </TooltipProvider>
-                )}
-              </span>
-              <span className="text-lg font-semibold text-foreground whitespace-nowrap">
-                <AnimatedNumber value={value} prefix="PHP " />
-              </span>
-            </div>
-            <div
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-                gradientClass
-              )}
-            >
-              <Icon className="h-4 w-4" />
-            </div>
+      <Card className={cn(
+        "group relative overflow-hidden border border-border/40 bg-gradient-to-br backdrop-blur-md transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl hover:border-border/80 h-full",
+        themeClasses.cardBg
+      )}>
+        {/* Top Accent Line */}
+        <div className={cn(
+          "absolute top-0 left-0 right-0 h-[2px] opacity-35 group-hover:opacity-100 transition-opacity duration-300",
+          themeClasses.accent
+        )} />
+
+        {/* Dotted Grid Background */}
+        <div 
+          className="absolute inset-0 opacity-[0.03] dark:opacity-[0.06] transition-opacity duration-300 group-hover:opacity-[0.05] dark:group-hover:opacity-[0.09] pointer-events-none"
+          style={{
+            backgroundImage: 'radial-gradient(circle, var(--foreground) 1px, transparent 1px)',
+            backgroundSize: '12px 12px',
+          }}
+        />
+
+        {/* Glow backdrop effect */}
+        <div className={cn(
+          "absolute -right-8 -top-8 h-20 w-20 rounded-full bg-gradient-to-br blur-2xl opacity-10 group-hover:opacity-20 transition-opacity duration-300 pointer-events-none",
+          themeClasses.glow
+        )} />
+        
+        {/* Large watermark icon in the background */}
+        <div className={cn(
+          "absolute -right-6 -bottom-6 transition-all duration-500 transform rotate-12 group-hover:scale-110 group-hover:rotate-[15deg] pointer-events-none",
+          themeClasses.iconColor
+        )}>
+          <Icon className="h-28 w-28 stroke-[1.2]" />
+        </div>
+
+        <CardContent className="p-3.5 sm:p-5 h-full flex flex-col justify-between gap-4 relative z-10">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[9px] sm:text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              {label}
+            </span>
+            
+            {tooltip && (
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex shrink-0">
+                    <Info className="h-3.5 w-3.5 text-muted-foreground/35 hover:text-muted-foreground/75 cursor-help transition-colors" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    <div>{tooltip}</div>
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            )}
+          </div>
+
+          <div className="mt-1 sm:mt-2">
+            <p className="text-sm sm:text-base md:text-lg lg:text-2xl xl:text-3xl font-bold text-foreground font-display tracking-tight flex items-baseline">
+              <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground/60 mr-1">PHP</span>
+              <AnimatedNumber value={value} />
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -886,9 +1002,12 @@ export default function DashboardPage() {
   const hasPartTime = (salaryConfig.part_time_salary ?? 0) > 0;
   const totalSalary = fullTimeSalary + partTimeSalary;
   const taxAmount = financialSummary?.totalTax ?? 0;
-  const totalExpenses = financialSummary?.totalExpensesSum ?? 0;
+  const forgivenLent = financialSummary?.forgivenLent ?? 0;
+  const giftedIncome = financialSummary?.giftedIncome ?? 0;
+  
+  const totalExpenses = (financialSummary?.totalExpensesSum ?? 0) + forgivenLent;
   // Spare: use aggregated spare and spent from ALL periods in range
-  const spareAmount = financialSummary?.totalSpare ?? 0;
+  const spareAmount = (financialSummary?.totalSpare ?? 0) + giftedIncome;
   const totalSpareSpent = financialSummary?.totalSpareSpent ?? 0;
   const totalConsumableSpent = financialSummary?.totalConsumableSpent ?? 0;
   const totalBorrowedAmt = financialSummary?.totalBorrowed ?? 0;
@@ -1111,34 +1230,48 @@ export default function DashboardPage() {
       {/* Financial Overview Cards */}
       {financialSummary && (
         <motion.div variants={staggerItem}>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OverviewCard
               label="Gross Income"
               value={financialSummary.grossIncome}
               icon={TrendingUp}
-              gradientClass="bg-teal-500/10 text-teal-500"
+              colorTheme="teal"
               tooltip="Total income before any deductions (wages + part-time + additional)"
             />
             <OverviewCard
               label="Net Income"
               value={financialSummary.netIncome}
               icon={DollarSign}
-              gradientClass="bg-emerald-500/10 text-emerald-500"
+              colorTheme="emerald"
               tooltip="Gross Income minus Tax and Deductions"
             />
             <OverviewCard
               label="Total Assets"
               value={financialSummary.totalAssets}
               icon={Landmark}
-              gradientClass="bg-violet-500/10 text-violet-500"
+              colorTheme="violet"
               tooltip="Sum of all asset-type allocations (Savings, Emergency, etc.)"
             />
             <OverviewCard
               label="Total Monthly Spending"
               value={financialSummary.monthlyExpenses + totalConsumableSpent + totalBorrowingSpent}
               icon={ArrowDownRight}
-              gradientClass="bg-rose-500/10 text-rose-500"
-              tooltip={`Budget Expenses (${formatPHP(totalExpenses)}) + Spare Spent (${formatPHP(totalSpareSpent)}) + Consumable (${formatPHP(totalConsumableSpent)}) + Borrowing Spent (${formatPHP(totalBorrowingSpent)})`}
+              colorTheme="rose"
+              tooltip={
+                <div className="space-y-1">
+                  <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                    <span className="text-muted-foreground">Budget Expenses:</span>
+                    <span className="font-medium">PHP {formatPHP(totalExpenses)}</span>
+                    <span className="text-muted-foreground">Spare Spent:</span>
+                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
+                    <span className="text-muted-foreground">Consumable:</span>
+                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
+                    <span className="text-muted-foreground">Borrowing Spent:</span>
+                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
+                  </div>
+                </div>
+              }
             />
           </div>
         </motion.div>
@@ -1151,7 +1284,18 @@ export default function DashboardPage() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                <CardTitle>Monthly Financial Breakdown</CardTitle>
+                <CardTitle className="flex items-center gap-2">Monthly Financial Breakdown
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex">
+                        <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        Where your money goes this period
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </CardTitle>
               </div>
               <CardDescription>Where your money goes this period</CardDescription>
             </CardHeader>
@@ -1425,7 +1569,7 @@ export default function DashboardPage() {
       {/* Quick Stats Row */}
       <div
         className={cn(
-          'grid grid-cols-1 gap-4 sm:grid-cols-2',
+          'grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4',
           hasPartTime ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
         )}
       >
@@ -1433,7 +1577,7 @@ export default function DashboardPage() {
           label="Full-time Salary"
           value={fullTimeSalary}
           icon={Briefcase}
-          colorClass="bg-indigo-500/10 text-indigo-500"
+          colorTheme="indigo"
           index={0}
           subtitle={hasPartTime ? undefined : 'Primary income'}
           tooltip="Sum of first and second wage"
@@ -1443,7 +1587,7 @@ export default function DashboardPage() {
             label="Part-time Salary"
             value={partTimeSalary}
             icon={Briefcase}
-            colorClass="bg-sky-500/10 text-sky-500"
+            colorTheme="sky"
             index={1}
             tooltip="Income from secondary source"
           />
@@ -1453,7 +1597,7 @@ export default function DashboardPage() {
             label="Total Salary"
             value={totalSalary}
             icon={Wallet}
-            colorClass="bg-teal-500/10 text-teal-500"
+            colorTheme="teal"
             index={2}
             subtitle="Full-time + Part-time"
           />
@@ -1462,7 +1606,7 @@ export default function DashboardPage() {
           label="Tax Amount"
           value={taxAmount}
           icon={Receipt}
-          colorClass="bg-rose-500/10 text-rose-500"
+          colorTheme="rose"
           index={hasPartTime ? 3 : 1}
           tooltip="Tax deducted from wages"
         />
@@ -1470,18 +1614,40 @@ export default function DashboardPage() {
           label="Total Expenses"
           value={totalExpenses + totalConsumableSpent + totalBorrowingSpent}
           icon={ArrowDownRight}
-          colorClass="bg-amber-500/10 text-amber-500"
+          colorTheme="amber"
           index={hasPartTime ? 4 : 2}
-          tooltip={`Budget Expenses (${formatPHP(totalExpenses)}) + Consumable (${formatPHP(totalConsumableSpent)}) + Borrowing Spent (${formatPHP(totalBorrowingSpent)})`}
+          tooltip={
+            <div className="space-y-1">
+              <p className="font-semibold mb-1">Calculation Breakdown:</p>
+              <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                <span className="text-muted-foreground">Budget Expenses:</span>
+                <span className="font-medium">PHP {formatPHP(totalExpenses - forgivenLent)}</span>
+                
+                {forgivenLent > 0 && (
+                  <>
+                    <span className="text-rose-500/80">Forgiven Lent:</span>
+                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(forgivenLent)}</span>
+                  </>
+                )}
+                
+                <span className="text-muted-foreground">Consumable Spent:</span>
+                <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
+                
+                <span className="text-muted-foreground">Borrowing Spent:</span>
+                <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
+              </div>
+            </div>
+          }
         />
         {!hasPartTime && (
           <StatCard
             label="Spare Amount"
             value={remainingSpare}
             icon={Sparkles}
-            colorClass="bg-purple-500/10 text-purple-500"
+            colorTheme="purple"
             index={3}
             subtitle={(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent) > 0 ? `PHP ${formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare` : undefined}
+            tooltip={giftedIncome > 0 ? `Includes PHP ${formatPHP(giftedIncome)} from gifted/forgiven borrowings` : undefined}
           />
         )}
       </div>
@@ -1493,9 +1659,43 @@ export default function DashboardPage() {
       >
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-white/80">
-              Available Spare
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-medium text-white/80">
+                Available Spare
+              </span>
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex cursor-help opacity-70 transition-opacity hover:opacity-100">
+                    <Info className="h-3.5 w-3.5 text-white" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs">
+                    <div className="space-y-1">
+                      <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                      <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                        <span className="text-muted-foreground">Total Budgeted Spare:</span>
+                        <span className="font-medium">PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
+                        
+                        {giftedIncome > 0 && (
+                          <>
+                            <span className="text-emerald-500/80">Gifted/Forgiven Borrowings:</span>
+                            <span className="text-emerald-500 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
+                          </>
+                        )}
+                        
+                        <span className="text-muted-foreground">Spent from Spare:</span>
+                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
+                        
+                        <span className="text-muted-foreground">Consumable Spent:</span>
+                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalConsumableSpent)}</span>
+                        
+                        <span className="text-muted-foreground">Borrowing Spent:</span>
+                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            </div>
             <span className="text-3xl font-semibold tabular-nums font-display text-white sm:text-4xl">
               PHP {formatPHP(remainingSpare)}
             </span>
@@ -1680,7 +1880,18 @@ export default function DashboardPage() {
         <motion.div variants={staggerItem} data-onboarding="budget-chart">
           <Card className="h-full overflow-visible">
             <CardHeader>
-              <CardTitle>Budget Allocation</CardTitle>
+              <CardTitle className="flex items-center gap-2">Budget Allocation
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex">
+                    <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Detailed breakdown of expense allocations
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            </CardTitle>
               <CardDescription>
                 Percentage breakdown of your {hasPartTime ? 'combined ' : ''}salary
               </CardDescription>
