@@ -9,6 +9,7 @@ import { MobileNav } from '@/components/layout/mobile-nav';
 import { AnimatedBackground } from '@/components/ui/animated-background';
 import { OnboardingProvider } from '@/components/onboarding/onboarding-provider';
 import { OnboardingSpotlight } from '@/components/onboarding/onboarding-spotlight';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 export default function DashboardLayout({
   children,
@@ -55,20 +56,22 @@ export default function DashboardLayout({
 
   return (
     <OnboardingProvider>
-      <div className="flex min-h-screen bg-background">
-        <AnimatedBackground variant="dashboard" />
-        <div data-onboarding="sidebar">
-          <AppSidebar />
+      <TooltipProvider delay={100}>
+        <div className="flex min-h-screen bg-background">
+          <AnimatedBackground variant="dashboard" />
+          <div data-onboarding="sidebar">
+            <AppSidebar />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col overflow-x-clip lg:ml-64">
+            <Header />
+            <main className="min-w-0 flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
+              {children}
+            </main>
+            <MobileNav />
+          </div>
         </div>
-        <div className="flex min-w-0 flex-1 flex-col overflow-x-clip lg:ml-64">
-          <Header />
-          <main className="min-w-0 flex-1 p-4 pb-20 sm:p-6 lg:pb-6">
-            {children}
-          </main>
-          <MobileNav />
-        </div>
-      </div>
-      <OnboardingSpotlight />
+        <OnboardingSpotlight />
+      </TooltipProvider>
     </OnboardingProvider>
   );
 }

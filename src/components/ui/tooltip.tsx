@@ -1,8 +1,15 @@
 "use client"
 
+import * as React from "react"
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 
 import { cn } from "@/lib/utils"
+
+const TooltipContext = React.createContext<{
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  isTouch: boolean;
+} | null>(null);
 
 function TooltipProvider({
   delay = 0,
@@ -18,11 +25,48 @@ function TooltipProvider({
 }
 
 function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+  const [open, setOpen] = React.useState(false);
+  const [isTouch, setIsTouch] = React.useState(false);
+
+  React.useEffect(() => {
+    const checkTouch = () => setIsTouch(window.matchMedia('(pointer: coarse)').matches);
+    checkTouch();
+    window.addEventListener('resize', checkTouch);
+    return () => window.removeEventListener('resize', checkTouch);
+  }, []);
+
+  return (
+    <TooltipContext.Provider value={{ open, setOpen, isTouch }}>
+      <TooltipPrimitive.Root 
+        data-slot="tooltip" 
+        open={open} 
+        onOpenChange={setOpen} 
+        {...props} 
+      />
+    </TooltipContext.Provider>
+  )
 }
 
-function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+function TooltipTrigger({ className, ...props }: TooltipPrimitive.Trigger.Props) {
+  const ctx = React.useContext(TooltipContext);
+  
+  return (
+    <TooltipPrimitive.Trigger 
+      data-slot="tooltip-trigger" 
+      className={cn("touch-manipulation", className)}
+      onPointerDown={(e) => {
+        if (props.onPointerDown) props.onPointerDown(e)
+      }}
+      onClick={(e) => {
+        if (ctx?.isTouch) {
+          // Toggle immediately on mobile tap!
+          ctx.setOpen(!ctx.open);
+        }
+        if (props.onClick) props.onClick(e)
+      }}
+      {...props} 
+    />
+  )
 }
 
 function TooltipContent({

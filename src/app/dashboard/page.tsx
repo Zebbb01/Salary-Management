@@ -161,7 +161,7 @@ interface StatCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  colorTheme: 'indigo' | 'sky' | 'teal' | 'rose' | 'amber' | 'purple';
+  colorTheme: 'indigo' | 'sky' | 'teal' | 'rose' | 'amber' | 'purple' | 'emerald' | 'violet';
   index: number;
   editable?: boolean;
   onSave?: (value: number) => void;
@@ -220,6 +220,18 @@ function StatCard({
       glow: 'from-purple-500/10 via-purple-500/5 to-transparent',
       cardBg: 'from-card via-card to-purple-950/15',
       iconColor: 'text-purple-500/5 dark:text-purple-400/5 group-hover:text-purple-500/10 dark:group-hover:text-purple-400/10',
+    },
+    emerald: {
+      accent: 'bg-emerald-500',
+      glow: 'from-emerald-500/10 via-emerald-500/5 to-transparent',
+      cardBg: 'from-card via-card to-emerald-950/15',
+      iconColor: 'text-emerald-500/5 dark:text-emerald-400/5 group-hover:text-emerald-500/10 dark:group-hover:text-emerald-400/10',
+    },
+    violet: {
+      accent: 'bg-violet-500',
+      glow: 'from-violet-500/10 via-violet-500/5 to-transparent',
+      cardBg: 'from-card via-card to-violet-950/15',
+      iconColor: 'text-violet-500/5 dark:text-violet-400/5 group-hover:text-violet-500/10 dark:group-hover:text-violet-400/10',
     },
   }[colorTheme];
 
@@ -348,7 +360,7 @@ interface OverviewCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  colorTheme: 'teal' | 'emerald' | 'violet' | 'rose';
+  colorTheme: 'teal' | 'emerald' | 'violet' | 'rose' | 'sky';
   tooltip?: React.ReactNode;
 }
 
@@ -377,6 +389,12 @@ function OverviewCard({ label, value, icon: Icon, colorTheme, tooltip }: Overvie
       glow: 'from-rose-500/10 via-rose-500/5 to-transparent',
       cardBg: 'from-card via-card to-rose-950/15',
       iconColor: 'text-rose-500/5 dark:text-rose-400/5 group-hover:text-rose-500/10 dark:group-hover:text-rose-400/10',
+    },
+    sky: {
+      accent: 'bg-sky-500',
+      glow: 'from-sky-500/10 via-sky-500/5 to-transparent',
+      cardBg: 'from-card via-card to-sky-950/15',
+      iconColor: 'text-sky-500/5 dark:text-sky-400/5 group-hover:text-sky-500/10 dark:group-hover:text-sky-400/10',
     },
   }[colorTheme];
 
@@ -570,6 +588,7 @@ function TrendChartTooltip({
   const income = payload.find((p) => p.dataKey === 'income')?.value ?? 0;
   const expenses = payload.find((p) => p.dataKey === 'expenses')?.value ?? 0;
   const net = income - expenses;
+  const showNet = payload.some(p => p.dataKey === 'income') && payload.some(p => p.dataKey === 'expenses');
 
   return (
     <div ref={ref}>
@@ -592,16 +611,20 @@ function TrendChartTooltip({
               </div>
             ))}
           </div>
-          <Separator className="my-2" />
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Net</span>
-            <span className={cn(
-              'font-bold tabular-nums',
-              net >= 0 ? 'text-emerald-500' : 'text-rose-500'
-            )}>
-              {net >= 0 ? '+' : ''}PHP {formatPHP(net)}
-            </span>
-          </div>
+          {showNet && (
+            <>
+              <Separator className="my-2" />
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Cashflow Net</span>
+                <span className={cn(
+                  'font-bold tabular-nums',
+                  net >= 0 ? 'text-emerald-500' : 'text-rose-500'
+                )}>
+                  {net >= 0 ? '+' : ''}PHP {formatPHP(net)}
+                </span>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -773,7 +796,15 @@ export default function DashboardPage() {
   // New state
   const [billPayments, setBillPayments] = useState<BillPayment[]>([]);
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
-  const [trendData, setTrendData] = useState<{ label: string; income: number; expenses: number; savings: number }[]>([]);
+  const [trendData, setTrendData] = useState<{ label: string; income: number; netPay: number; expenses: number; spare: number; tax: number; savings: number }[]>([]);
+  const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({
+    income: true,
+    netPay: true,
+    expenses: true,
+    spare: false,
+    tax: false,
+    savings: false,
+  });
   const [userId, setUserId] = useState<string | null>(null);
   const [trendLimit, setTrendLimit] = useState(6);
   const [allocationTypes, setAllocationTypes] = useState<AllocationType[]>([]);
@@ -792,6 +823,15 @@ export default function DashboardPage() {
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  const handleLegendClick = useCallback((e: any) => {
+    const dataKey = e.dataKey;
+    if (!dataKey) return;
+    setVisibleSeries((prev) => ({
+      ...prev,
+      [dataKey]: !prev[dataKey],
+    }));
   }, []);
 
   // Handle trend filter change
@@ -1006,12 +1046,19 @@ export default function DashboardPage() {
   const giftedIncome = financialSummary?.giftedIncome ?? 0;
   
   const totalExpenses = (financialSummary?.totalExpensesSum ?? 0) + forgivenLent;
+
   // Spare: use aggregated spare and spent from ALL periods in range
   const spareAmount = (financialSummary?.totalSpare ?? 0) + giftedIncome;
   const totalSpareSpent = financialSummary?.totalSpareSpent ?? 0;
+  
+  // financialSummary.monthlyExpenses already includes totalSpareSpent, so we subtract it here
+  // to get the pure "Fixed Allocations" (which is just expenses + assets without spare spent)
+  const totalAllocated = (financialSummary?.monthlyExpenses ?? 0) + (financialSummary?.totalAssets ?? 0) - totalSpareSpent;
   const totalConsumableSpent = financialSummary?.totalConsumableSpent ?? 0;
   const totalBorrowedAmt = financialSummary?.totalBorrowed ?? 0;
   const totalBorrowingSpent = financialSummary?.totalBorrowingExpensesSpent ?? 0;
+
+  const totalOutflow = totalAllocated + totalSpareSpent + totalConsumableSpent + totalBorrowingSpent + forgivenLent;
   const remainingSpare = spareAmount - totalSpareSpent - totalConsumableSpent - totalBorrowingSpent;
 
   // Build a map of allocation_type_id -> classification
@@ -1232,47 +1279,105 @@ export default function DashboardPage() {
         <motion.div variants={staggerItem}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OverviewCard
-              label="Gross Income"
-              value={financialSummary.grossIncome}
-              icon={TrendingUp}
-              colorTheme="teal"
-              tooltip="Total income before any deductions (wages + part-time + additional)"
+              label="Overall Wallet"
+              value={financialSummary.netIncome + giftedIncome + forgivenLent}
+              icon={Wallet}
+              colorTheme="sky"
+              tooltip="Net Pay + Gifted/Forgiven Borrowings"
             />
             <OverviewCard
-              label="Net Income"
-              value={financialSummary.netIncome}
-              icon={DollarSign}
-              colorTheme="emerald"
-              tooltip="Gross Income minus Tax and Deductions"
-            />
-            <OverviewCard
-              label="Total Assets"
-              value={financialSummary.totalAssets}
-              icon={Landmark}
-              colorTheme="violet"
-              tooltip="Sum of all asset-type allocations (Savings, Emergency, etc.)"
-            />
-            <OverviewCard
-              label="Total Monthly Spending"
-              value={financialSummary.monthlyExpenses + totalConsumableSpent + totalBorrowingSpent}
+              label="Total Expenditures"
+              value={totalOutflow}
               icon={ArrowDownRight}
               colorTheme="rose"
               tooltip={
                 <div className="space-y-1">
                   <p className="font-semibold mb-1">Calculation Breakdown:</p>
                   <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                    <span className="text-muted-foreground">Budget Expenses:</span>
-                    <span className="font-medium">PHP {formatPHP(totalExpenses)}</span>
+                    <span className="text-muted-foreground">Fixed Allocations:</span>
+                    <span className="font-medium">PHP {formatPHP(totalAllocated)}</span>
+                    
                     <span className="text-muted-foreground">Spare Spent:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
-                    <span className="text-muted-foreground">Consumable:</span>
+                    
+                    <span className="text-muted-foreground">Consumables:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
+                    
                     <span className="text-muted-foreground">Borrowing Spent:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
+                    
+                    {forgivenLent > 0 && (
+                      <>
+                        <span className="text-rose-500/80">Forgiven Lent:</span>
+                        <span className="text-rose-500 font-medium">+ PHP {formatPHP(forgivenLent)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               }
             />
+            <OverviewCard
+              label="Tax Amount"
+              value={taxAmount}
+              icon={Receipt}
+              colorTheme="violet"
+              tooltip="Tax deducted from wages"
+            />
+            <div className="relative overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-emerald-600 to-emerald-500 p-5 shadow-lg dark:from-emerald-700 dark:to-emerald-600 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl h-full flex flex-col justify-between">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-medium text-white/90 leading-tight truncate whitespace-normal">
+                    Available Spare
+                  </span>
+                  <TooltipProvider>
+                    <UITooltip>
+                      <TooltipTrigger className="flex cursor-help opacity-70 transition-opacity hover:opacity-100 shrink-0">
+                        <Info className="h-3.5 w-3.5 text-white" />
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="text-xs">
+                        <div className="space-y-1">
+                          <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                          <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                            <span className="text-muted-foreground">Total Budgeted Spare:</span>
+                            <span className="font-medium">PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
+                            
+                            {giftedIncome > 0 && (
+                              <>
+                                <span className="text-emerald-500/80">Gifted/Forgiven Borrowings:</span>
+                                <span className="text-emerald-500 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
+                              </>
+                            )}
+                            
+                            <span className="text-muted-foreground">Spent from Spare:</span>
+                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
+                            
+                            <span className="text-muted-foreground">Consumable Spent:</span>
+                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalConsumableSpent)}</span>
+                            
+                            <span className="text-muted-foreground">Borrowing Spent:</span>
+                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                </div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 shrink-0">
+                  <TrendingUp className="h-4 w-4 text-white" />
+                </div>
+              </div>
+              
+              <div className="flex flex-col gap-0.5 mt-auto">
+                <span className="text-2xl font-semibold tabular-nums font-display text-white">
+                  PHP {formatPHP(remainingSpare)}
+                </span>
+                {(totalSpareSpent > 0 || totalConsumableSpent > 0 || totalBorrowingSpent > 0) && (
+                  <span className="text-[11px] text-white/75 leading-tight">
+                    PHP {formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </motion.div>
       )}
@@ -1566,19 +1671,43 @@ export default function DashboardPage() {
         </motion.div>
       )}
 
-      {/* Quick Stats Row */}
+      {/* Monthly Financial Breakdown */}
       <div
         className={cn(
           'grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4',
-          hasPartTime ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+          hasPartTime ? 'lg:grid-cols-6' : 'lg:grid-cols-4'
         )}
       >
+        <StatCard
+          label="Gross Income"
+          value={financialSummary?.grossIncome ?? 0}
+          icon={TrendingUp}
+          colorTheme="teal"
+          index={0}
+          tooltip="Total income before any deductions"
+        />
+        <StatCard
+          label="Net Income"
+          value={financialSummary?.netIncome ?? 0}
+          icon={DollarSign}
+          colorTheme="emerald"
+          index={1}
+          tooltip="Gross Income minus Tax and Deductions"
+        />
+        <StatCard
+          label="Total Assets"
+          value={financialSummary?.totalAssets ?? 0}
+          icon={Landmark}
+          colorTheme="violet"
+          index={2}
+          tooltip="Sum of all asset-type allocations"
+        />
         <StatCard
           label="Full-time Salary"
           value={fullTimeSalary}
           icon={Briefcase}
           colorTheme="indigo"
-          index={0}
+          index={3}
           subtitle={hasPartTime ? undefined : 'Primary income'}
           tooltip="Sum of first and second wage"
         />
@@ -1588,7 +1717,7 @@ export default function DashboardPage() {
             value={partTimeSalary}
             icon={Briefcase}
             colorTheme="sky"
-            index={1}
+            index={4}
             tooltip="Income from secondary source"
           />
         )}
@@ -1598,118 +1727,13 @@ export default function DashboardPage() {
             value={totalSalary}
             icon={Wallet}
             colorTheme="teal"
-            index={2}
-            subtitle="Full-time + Part-time"
-          />
-        )}
-        <StatCard
-          label="Tax Amount"
-          value={taxAmount}
-          icon={Receipt}
-          colorTheme="rose"
-          index={hasPartTime ? 3 : 1}
-          tooltip="Tax deducted from wages"
-        />
-        <StatCard
-          label="Total Expenses"
-          value={totalExpenses + totalConsumableSpent + totalBorrowingSpent}
-          icon={ArrowDownRight}
-          colorTheme="amber"
-          index={hasPartTime ? 4 : 2}
-          tooltip={
-            <div className="space-y-1">
-              <p className="font-semibold mb-1">Calculation Breakdown:</p>
-              <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                <span className="text-muted-foreground">Budget Expenses:</span>
-                <span className="font-medium">PHP {formatPHP(totalExpenses - forgivenLent)}</span>
-                
-                {forgivenLent > 0 && (
-                  <>
-                    <span className="text-rose-500/80">Forgiven Lent:</span>
-                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(forgivenLent)}</span>
-                  </>
-                )}
-                
-                <span className="text-muted-foreground">Consumable Spent:</span>
-                <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
-                
-                <span className="text-muted-foreground">Borrowing Spent:</span>
-                <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
-              </div>
-            </div>
-          }
-        />
-        {!hasPartTime && (
-          <StatCard
-            label="Spare Amount"
-            value={remainingSpare}
-            icon={Sparkles}
-            colorTheme="purple"
-            index={3}
-            subtitle={(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent) > 0 ? `PHP ${formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare` : undefined}
-            tooltip={giftedIncome > 0 ? `Includes PHP ${formatPHP(giftedIncome)} from gifted/forgiven borrowings` : undefined}
+            index={5}
+            tooltip="Full-time + Part-time"
           />
         )}
       </div>
 
-      {/* Spare Amount Hero Card */}
-      <motion.div
-        variants={staggerItem}
-        className="rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 p-6 shadow-lg dark:from-emerald-700 dark:to-emerald-600"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-medium text-white/80">
-                Available Spare
-              </span>
-              <TooltipProvider>
-                <UITooltip>
-                  <TooltipTrigger className="flex cursor-help opacity-70 transition-opacity hover:opacity-100">
-                    <Info className="h-3.5 w-3.5 text-white" />
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="text-xs">
-                    <div className="space-y-1">
-                      <p className="font-semibold mb-1">Calculation Breakdown:</p>
-                      <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                        <span className="text-muted-foreground">Total Budgeted Spare:</span>
-                        <span className="font-medium">PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
-                        
-                        {giftedIncome > 0 && (
-                          <>
-                            <span className="text-emerald-500/80">Gifted/Forgiven Borrowings:</span>
-                            <span className="text-emerald-500 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
-                          </>
-                        )}
-                        
-                        <span className="text-muted-foreground">Spent from Spare:</span>
-                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
-                        
-                        <span className="text-muted-foreground">Consumable Spent:</span>
-                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalConsumableSpent)}</span>
-                        
-                        <span className="text-muted-foreground">Borrowing Spent:</span>
-                        <span className="text-rose-500 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </UITooltip>
-              </TooltipProvider>
-            </div>
-            <span className="text-3xl font-semibold tabular-nums font-display text-white sm:text-4xl">
-              PHP {formatPHP(remainingSpare)}
-            </span>
-            {(totalSpareSpent > 0 || totalConsumableSpent > 0 || totalBorrowingSpent > 0) && (
-              <span className="text-xs text-white/60">
-                PHP {formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)} spent from spare
-              </span>
-            )}
-          </div>
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15">
-            <TrendingUp className="h-6 w-6 text-white" />
-          </div>
-        </div>
-      </motion.div>
+
 
       {/* Active Borrowing Impact on Spare */}
       {borrowingSummary && borrowingSummary.activeCount > 0 && (
@@ -1748,7 +1772,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                <CardTitle>Income vs Expenses Trend</CardTitle>
+                <CardTitle>Financial Trend</CardTitle>
               </div>
               <div className="flex items-center gap-1">
                 {[
@@ -1788,9 +1812,25 @@ export default function DashboardPage() {
                         <stop offset="0%" stopColor="#34d399" stopOpacity={0.3} />
                         <stop offset="100%" stopColor="#34d399" stopOpacity={0.02} />
                       </linearGradient>
+                      <linearGradient id="netPayGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.02} />
+                      </linearGradient>
                       <linearGradient id="expensesGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#f472b6" stopOpacity={0.3} />
                         <stop offset="100%" stopColor="#f472b6" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="spareGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="#a78bfa" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="taxGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="#fbbf24" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="savingsGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.3} />
+                        <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid
@@ -1824,20 +1864,44 @@ export default function DashboardPage() {
                     <Legend
                       iconType="circle"
                       iconSize={8}
-                      wrapperStyle={{ fontSize: 12, paddingTop: 16 }}
-                      formatter={(value: string) => (
-                        <span style={{ color: '#94a3b8', fontSize: 12 }}>{value}</span>
-                      )}
+                      onClick={handleLegendClick}
+                      wrapperStyle={{ fontSize: 12, paddingTop: 16, cursor: 'pointer' }}
+                      formatter={(value: string, entry: any) => {
+                        const dataKey = entry.dataKey;
+                        const isVisible = visibleSeries[dataKey];
+                        return (
+                          <span style={{ 
+                            color: isVisible ? '#94a3b8' : '#475569', 
+                            fontSize: 12, 
+                            textDecoration: isVisible ? 'none' : 'line-through' 
+                          }}>
+                            {value}
+                          </span>
+                        );
+                      }}
                     />
                     <Area
                       type="monotone"
                       dataKey="income"
-                      name="Income"
+                      name="Gross Income"
                       stroke="#34d399"
                       strokeWidth={2.5}
                       fill="url(#incomeGradient)"
+                      hide={!visibleSeries.income}
                       dot={{ r: 4, fill: '#34d399', stroke: '#1e293b', strokeWidth: 2 }}
                       activeDot={{ r: 6, fill: '#34d399', stroke: '#fff', strokeWidth: 2 }}
+                      animationDuration={800}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="netPay"
+                      name="Net Pay"
+                      stroke="#38bdf8"
+                      strokeWidth={2.5}
+                      fill="url(#netPayGradient)"
+                      hide={!visibleSeries.netPay}
+                      dot={{ r: 4, fill: '#38bdf8', stroke: '#1e293b', strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: '#38bdf8', stroke: '#fff', strokeWidth: 2 }}
                       animationDuration={800}
                     />
                     <Area
@@ -1847,8 +1911,45 @@ export default function DashboardPage() {
                       stroke="#f472b6"
                       strokeWidth={2.5}
                       fill="url(#expensesGradient)"
+                      hide={!visibleSeries.expenses}
                       dot={{ r: 4, fill: '#f472b6', stroke: '#1e293b', strokeWidth: 2 }}
                       activeDot={{ r: 6, fill: '#f472b6', stroke: '#fff', strokeWidth: 2 }}
+                      animationDuration={800}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="spare"
+                      name="Spare"
+                      stroke="#a78bfa"
+                      strokeWidth={2.5}
+                      fill="url(#spareGradient)"
+                      hide={!visibleSeries.spare}
+                      dot={{ r: 4, fill: '#a78bfa', stroke: '#1e293b', strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: '#a78bfa', stroke: '#fff', strokeWidth: 2 }}
+                      animationDuration={800}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="tax"
+                      name="Tax"
+                      stroke="#fbbf24"
+                      strokeWidth={2.5}
+                      fill="url(#taxGradient)"
+                      hide={!visibleSeries.tax}
+                      dot={{ r: 4, fill: '#fbbf24', stroke: '#1e293b', strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: '#fbbf24', stroke: '#fff', strokeWidth: 2 }}
+                      animationDuration={800}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="savings"
+                      name="Savings"
+                      stroke="#2dd4bf"
+                      strokeWidth={2.5}
+                      fill="url(#savingsGradient)"
+                      hide={!visibleSeries.savings}
+                      dot={{ r: 4, fill: '#2dd4bf', stroke: '#1e293b', strokeWidth: 2 }}
+                      activeDot={{ r: 6, fill: '#2dd4bf', stroke: '#fff', strokeWidth: 2 }}
                       animationDuration={800}
                     />
                   </AreaChart>

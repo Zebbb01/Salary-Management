@@ -101,15 +101,15 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [isNavigating, setIsNavigating] = useState(false);
 
-  // Check sessionStorage on mount -- run tour once per session
+  // Check localStorage on mount -- run tour once ever
   useEffect(() => {
     try {
-      const completed = sessionStorage.getItem(SESSION_KEY);
+      const completed = localStorage.getItem(SESSION_KEY);
       if (!completed) {
         setIsOnboarding(true);
       }
     } catch {
-      // sessionStorage unavailable
+      // localStorage unavailable
     }
   }, []);
 
@@ -130,9 +130,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 
   const markComplete = useCallback(() => {
     try {
-      sessionStorage.setItem(SESSION_KEY, 'true');
+      localStorage.setItem(SESSION_KEY, 'true');
     } catch {
-      // sessionStorage unavailable
+      // localStorage unavailable
     }
     setIsOnboarding(false);
     setCurrentStep(0);

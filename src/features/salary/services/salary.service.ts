@@ -625,36 +625,40 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     }
   }
 
-  // Fetch active (unsettled) borrowing totals
+  // Fetch active (unsettled) borrowing totals for outstanding debt display
   let totalBorrowed = 0;
   let totalLent = 0;
   let totalBorrowingExpensesSpent = 0;
-  const { data: borrowingData } = await supabase
+  const { data: activeBorrowingData } = await supabase
     .from('borrowings')
     .select('id, type, amount')
     .eq('is_settled', false);
 
-  if (borrowingData) {
-    for (const b of borrowingData) {
+  if (activeBorrowingData) {
+    for (const b of activeBorrowingData) {
       if (b.type === 'borrowed') totalBorrowed += Number(b.amount ?? 0);
       else if (b.type === 'lent') totalLent += Number(b.amount ?? 0);
     }
+  }
 
-    // Fetch actual spending from active borrowed entries
-    const borrowedIds = borrowingData
-      .filter(b => b.type === 'borrowed')
-      .map(b => b.id);
+  // Fetch ALL borrowing expenses (settled + unsettled) for spare calculation
+  // This ensures the dashboard spare matches the history page
+  const { data: allBorrowingData } = await supabase
+    .from('borrowings')
+    .select('id, type')
+    .eq('type', 'borrowed');
 
-    if (borrowedIds.length > 0) {
-      const { data: expData } = await supabase
-        .from('borrowing_expenses')
-        .select('amount')
-        .in('borrowing_id', borrowedIds);
+  if (allBorrowingData && allBorrowingData.length > 0) {
+    const allBorrowedIds = allBorrowingData.map(b => b.id);
 
-      if (expData) {
-        for (const e of expData) {
-          totalBorrowingExpensesSpent += Number(e.amount ?? 0);
-        }
+    const { data: expData } = await supabase
+      .from('borrowing_expenses')
+      .select('amount')
+      .in('borrowing_id', allBorrowedIds);
+
+    if (expData) {
+      for (const e of expData) {
+        totalBorrowingExpensesSpent += Number(e.amount ?? 0);
       }
     }
   }
@@ -725,14 +729,17 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
 export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; dateTo?: string }): Promise<{
   label: string;
   income: number;
+  netPay: number;
   expenses: number;
+  spare: number;
+  tax: number;
   savings: number;
 }[]> {
   // Build query with date filters applied BEFORE limit to ensure we get
   // the most recent N periods within the date range, not the oldest N globally.
   let query = supabase
     .from('pay_periods')
-    .select('id, period_label, total_income, total_expenses, total_savings');
+    .select('id, period_label, total_income, total_expenses, total_savings, total_tax, total_deductions, spare_amount');
 
   // Apply date filters first so the limit applies to the filtered set
   if (opts?.dateFrom) query = query.gte('created_at', opts.dateFrom);
@@ -770,12 +777,20 @@ export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; d
   }
 
   // Reverse to chronological order (ascending) for chart display
-  return periods.reverse().map((p) => ({
-    label: p.period_label?.split(' - ')[0] ?? '',
-    income: Number(p.total_income ?? 0),
-    expenses: Number(p.total_expenses ?? 0) + (spareSpentByPeriod.get(p.id) ?? 0),
-    savings: Number(p.total_savings ?? 0),
-  }));
+  return periods.reverse().map((p) => {
+    const income = Number(p.total_income ?? 0);
+    const tax = Number(p.total_tax ?? 0);
+    const deductions = Number(p.total_deductions ?? 0);
+    return {
+      label: p.period_label?.split(' - ')[0] ?? '',
+      income,
+      netPay: income - tax - deductions,
+      expenses: Number(p.total_expenses ?? 0) + (spareSpentByPeriod.get(p.id) ?? 0),
+      spare: Number(p.spare_amount ?? 0),
+      tax,
+      savings: Number(p.total_savings ?? 0),
+    };
+  });
 }
 
 export async function getLatestPeriodInRange(opts?: { dateFrom?: string; dateTo?: string }): Promise<PayPeriod | null> {
@@ -941,7 +956,8 @@ export async function getConsumableExpenses(
     .from('consumable_expenses')
     .select('*')
     .eq('month', month)
-    .order('expense_date', { ascending: false });
+    .order('expense_date', { ascending: false })
+    .order('created_at', { ascending: false });
 
   if (error) throw error;
   return data ?? [];
