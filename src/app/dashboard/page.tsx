@@ -17,6 +17,7 @@ import {
   ArrowDownRight,
   Sparkles,
   TrendingUp,
+  TrendingDown,
   Settings,
   Briefcase,
   Wallet,
@@ -360,7 +361,7 @@ interface OverviewCardProps {
   label: string;
   value: number;
   icon: React.ElementType;
-  colorTheme: 'teal' | 'emerald' | 'violet' | 'rose' | 'sky';
+  colorTheme: 'teal' | 'emerald' | 'violet' | 'rose' | 'sky' | 'slate';
   tooltip?: React.ReactNode;
 }
 
@@ -395,6 +396,12 @@ function OverviewCard({ label, value, icon: Icon, colorTheme, tooltip }: Overvie
       glow: 'from-sky-500/10 via-sky-500/5 to-transparent',
       cardBg: 'from-card via-card to-sky-950/15',
       iconColor: 'text-sky-500/5 dark:text-sky-400/5 group-hover:text-sky-500/10 dark:group-hover:text-sky-400/10',
+    },
+    slate: {
+      accent: 'bg-slate-500',
+      glow: 'from-slate-500/10 via-slate-500/5 to-transparent',
+      cardBg: 'from-card via-card to-slate-950/15',
+      iconColor: 'text-slate-500/5 dark:text-slate-400/5 group-hover:text-slate-500/10 dark:group-hover:text-slate-400/10',
     },
   }[colorTheme];
 
@@ -732,35 +739,51 @@ type DateFilterPreset = 'this-month' | 'last-month' | 'last-3-months' | 'this-ye
 function getDateRange(preset: DateFilterPreset, customRange?: MonthYearSelection | null): { dateFrom?: string; dateTo?: string; billMonth: string } {
   const now = new Date();
   const year = now.getFullYear();
-  const month = now.getMonth();
+  const month = now.getMonth(); // 0-indexed
+
+  // Helper: build a timezone-safe date string (YYYY-MM-DD or YYYY-MM-DDT23:59:59)
+  // Using local-time strings avoids UTC offset issues where midnight local time
+  // shifts to the previous day in UTC (e.g. Philippines UTC+8).
+  function localDate(y: number, m: number, d: number): string {
+    return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  function localDateEnd(y: number, m: number, d: number): string {
+    return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}T23:59:59`;
+  }
+  function lastDay(y: number, m: number): number {
+    return new Date(y, m + 1, 0).getDate();
+  }
 
   switch (preset) {
     case 'this-month': {
-      const from = new Date(year, month, 1).toISOString();
-      const to = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+      const from = localDate(year, month, 1);
+      const to = localDateEnd(year, month, lastDay(year, month));
       return { dateFrom: from, dateTo: to, billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
     }
     case 'last-month': {
-      const from = new Date(year, month - 1, 1).toISOString();
-      const to = new Date(year, month, 0, 23, 59, 59).toISOString();
-      const m = month === 0 ? 12 : month;
-      const y = month === 0 ? year - 1 : year;
-      return { dateFrom: from, dateTo: to, billMonth: `${y}-${String(m).padStart(2, '0')}` };
+      const lmDate = new Date(year, month - 1, 1);
+      const lmYear = lmDate.getFullYear();
+      const lmMonth = lmDate.getMonth();
+      const from = localDate(lmYear, lmMonth, 1);
+      const to = localDateEnd(lmYear, lmMonth, lastDay(lmYear, lmMonth));
+      return { dateFrom: from, dateTo: to, billMonth: `${lmYear}-${String(lmMonth + 1).padStart(2, '0')}` };
     }
     case 'last-3-months': {
-      const from = new Date(year, month - 2, 1).toISOString();
+      const l3Date = new Date(year, month - 2, 1);
+      const from = localDate(l3Date.getFullYear(), l3Date.getMonth(), 1);
       return { dateFrom: from, billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
     }
     case 'this-year': {
-      const from = new Date(year, 0, 1).toISOString();
+      const from = localDate(year, 0, 1);
       return { dateFrom: from, billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
     }
     case 'custom': {
       if (customRange) {
-        const { dateFrom, dateTo } = monthYearToDateRange(customRange);
-        const m = customRange.month + 1;
-        const y = customRange.year;
-        return { dateFrom, dateTo, billMonth: `${y}-${String(m).padStart(2, '0')}` };
+        const cYear = customRange.year;
+        const cMonth = customRange.month; // 0-indexed
+        const from = localDate(cYear, cMonth, 1);
+        const to = localDateEnd(cYear, cMonth, lastDay(cYear, cMonth));
+        return { dateFrom: from, dateTo: to, billMonth: `${cYear}-${String(cMonth + 1).padStart(2, '0')}` };
       }
       return { billMonth: `${year}-${String(month + 1).padStart(2, '0')}` };
     }
@@ -786,6 +809,7 @@ export default function DashboardPage() {
   const [salaryConfig, setSalaryConfig] = useState<SalaryConfig | null>(null);
   const [allocations, setAllocations] = useState<BudgetAllocationWithAmount[]>([]);
   const [latestPeriod, setLatestPeriod] = useState<PayPeriod | null>(null);
+  const [hasPeriods, setHasPeriods] = useState(false);
   const [spareSpent, setSpareSpent] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -796,6 +820,8 @@ export default function DashboardPage() {
   // New state
   const [billPayments, setBillPayments] = useState<BillPayment[]>([]);
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
+  const [allTimeFinancialSummary, setAllTimeFinancialSummary] = useState<FinancialSummary | null>(null);
+  const [startingBalanceSummary, setStartingBalanceSummary] = useState<FinancialSummary | null>(null);
   const [trendData, setTrendData] = useState<{ label: string; income: number; netPay: number; expenses: number; spare: number; tax: number; savings: number }[]>([]);
   const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({
     income: true,
@@ -913,6 +939,19 @@ export default function DashboardPage() {
       // Fetch financial summary with date filter
       const summary = await getFinancialSummary(dateOpts);
       setFinancialSummary(summary);
+      
+      // Fetch all-time financial summary for Overall Wallet balance
+      const allTimeSummary = await getFinancialSummary();
+      setAllTimeFinancialSummary(allTimeSummary);
+
+      // Fetch starting balance summary (up to dateFrom - 1 day)
+      let startingSummary = null;
+      if (dateOpts.dateFrom) {
+        const dFrom = new Date(dateOpts.dateFrom);
+        dFrom.setDate(dFrom.getDate() - 1);
+        startingSummary = await getFinancialSummary({ dateTo: dFrom.toISOString() });
+      }
+      setStartingBalanceSummary(startingSummary);
 
       // Fetch trend data with date filter
       const trend = await getPayPeriodTrend(6, dateOpts);
@@ -926,11 +965,10 @@ export default function DashboardPage() {
         setSpareTransactions([]);
       }
 
-      // Fetch consumable budget summary for current month
+      // Fetch consumable budget summary for the selected date filter month
       try {
-        const cMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
         const allowance = configData.consumable_allowance ?? 4500;
-        const consumable = await getConsumableBudgetSummary(cMonth, allowance);
+        const consumable = await getConsumableBudgetSummary(billMonth, allowance);
         setConsumableSummary(consumable);
       } catch {
         setConsumableSummary(null);
@@ -954,6 +992,7 @@ export default function DashboardPage() {
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       })();
       const hasAnyPeriods = await getPayPeriods(1);
+      setHasPeriods(hasAnyPeriods.length > 0);
       if (user && computed.length > 0 && hasAnyPeriods.length > 0) {
         const allocationsWithIds = computed.map((a) => ({
           id: a.id,
@@ -1051,15 +1090,33 @@ export default function DashboardPage() {
   const spareAmount = (financialSummary?.totalSpare ?? 0) + giftedIncome;
   const totalSpareSpent = financialSummary?.totalSpareSpent ?? 0;
   
-  // financialSummary.monthlyExpenses already includes totalSpareSpent, so we subtract it here
-  // to get the pure "Fixed Allocations" (which is just expenses + assets without spare spent)
-  const totalAllocated = (financialSummary?.monthlyExpenses ?? 0) + (financialSummary?.totalAssets ?? 0) - totalSpareSpent;
+  // financialSummary.monthlyExpenses now represents pure budget expenses.
+  // We simply add totalAssets to get the "Fixed Allocations" amount.
+  const totalAllocated = (financialSummary?.monthlyExpenses ?? 0) + (financialSummary?.totalAssets ?? 0);
   const totalConsumableSpent = financialSummary?.totalConsumableSpent ?? 0;
   const totalBorrowedAmt = financialSummary?.totalBorrowed ?? 0;
+  const totalLentAmt = financialSummary?.totalLent ?? 0;
   const totalBorrowingSpent = financialSummary?.totalBorrowingExpensesSpent ?? 0;
 
   const totalOutflow = totalAllocated + totalSpareSpent + totalConsumableSpent + totalBorrowingSpent + forgivenLent;
   const remainingSpare = spareAmount - totalSpareSpent - totalConsumableSpent - totalBorrowingSpent;
+
+  // Compute all-time remaining spare (Current Wallet Liquid Cash)
+  const allTimeSpareAmount = (allTimeFinancialSummary?.totalSpare ?? 0) + (allTimeFinancialSummary?.giftedIncome ?? 0);
+  const allTimeRemainingSpare = allTimeSpareAmount 
+    - (allTimeFinancialSummary?.totalSpareSpent ?? 0) 
+    - (allTimeFinancialSummary?.totalConsumableSpent ?? 0) 
+    - (allTimeFinancialSummary?.totalBorrowingExpensesSpent ?? 0);
+
+  // Compute starting balance for the selected date filter
+  const startingSpareAmount = (startingBalanceSummary?.totalSpare ?? 0) + (startingBalanceSummary?.giftedIncome ?? 0);
+  const startingBalance = startingBalanceSummary ? startingSpareAmount 
+    - (startingBalanceSummary.totalSpareSpent ?? 0) 
+    - (startingBalanceSummary.totalConsumableSpent ?? 0) 
+    - (startingBalanceSummary.totalBorrowingExpensesSpent ?? 0) : 0;
+
+  // The ending balance for the filtered period is the starting balance plus the net flow of this period
+  const endingBalance = startingBalance + remainingSpare;
 
   // Build a map of allocation_type_id -> classification
   const typeClassificationMap = new Map(
@@ -1164,7 +1221,7 @@ export default function DashboardPage() {
 
       {/* Unpaid Bills Alert Banner - only show on This Month and when user has at least one pay period */}
       <AnimatePresence>
-        {dateFilter === 'this-month' && unpaidBills.length > 0 && latestPeriod && (
+        {dateFilter === 'this-month' && unpaidBills.length > 0 && hasPeriods && (
           <motion.div
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1279,56 +1336,46 @@ export default function DashboardPage() {
         <motion.div variants={staggerItem}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OverviewCard
-              label="Overall Wallet"
-              value={financialSummary.netIncome + giftedIncome + forgivenLent}
+              label="Current Wallet (Liquid Cash)"
+              value={startingBalance}
               icon={Wallet}
               colorTheme="sky"
-              tooltip="Net Pay + Gifted/Forgiven Borrowings"
+              tooltip="Carried-over balance up to the start of this period"
+            />
+            <OverviewCard
+              label="Net Income"
+              value={financialSummary?.netIncome ?? 0}
+              icon={DollarSign}
+              colorTheme="emerald"
+              tooltip="Gross Income minus Tax and Deductions"
             />
             <OverviewCard
               label="Total Expenditures"
               value={totalOutflow}
-              icon={ArrowDownRight}
+              icon={TrendingDown}
               colorTheme="rose"
               tooltip={
-                <div className="space-y-1">
+                <div className="space-y-1 w-44">
                   <p className="font-semibold mb-1">Calculation Breakdown:</p>
                   <div className="grid grid-cols-[1fr_auto] gap-x-4">
                     <span className="text-muted-foreground">Fixed Allocations:</span>
-                    <span className="font-medium">PHP {formatPHP(totalAllocated)}</span>
-                    
+                    <span className="text-rose-500 font-medium">- PHP {formatPHP(totalAllocated)}</span>
                     <span className="text-muted-foreground">Spare Spent:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
-                    
                     <span className="text-muted-foreground">Consumables:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
-                    
                     <span className="text-muted-foreground">Borrowing Spent:</span>
                     <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
-                    
-                    {forgivenLent > 0 && (
-                      <>
-                        <span className="text-rose-500/80">Forgiven Lent:</span>
-                        <span className="text-rose-500 font-medium">+ PHP {formatPHP(forgivenLent)}</span>
-                      </>
-                    )}
                   </div>
                 </div>
               }
             />
-            <OverviewCard
-              label="Tax Amount"
-              value={taxAmount}
-              icon={Receipt}
-              colorTheme="violet"
-              tooltip="Tax deducted from wages"
-            />
-            <div className="relative overflow-hidden rounded-xl border border-border/40 bg-gradient-to-br from-emerald-600 to-emerald-500 p-5 shadow-lg dark:from-emerald-700 dark:to-emerald-600 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl h-full flex flex-col justify-between">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-sm font-medium text-white/90 leading-tight truncate whitespace-normal">
-                    Available Spare
-                  </span>
+            {/* Available Spare Card - Always green */}
+            <div className="relative overflow-hidden rounded-xl bg-emerald-500 p-4 shadow-sm border border-emerald-400/20 flex flex-col justify-between">
+              <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-white/90">Available Spare</p>
                   <TooltipProvider>
                     <UITooltip>
                       <TooltipTrigger className="flex cursor-help opacity-70 transition-opacity hover:opacity-100 shrink-0">
@@ -1338,8 +1385,11 @@ export default function DashboardPage() {
                         <div className="space-y-1">
                           <p className="font-semibold mb-1">Calculation Breakdown:</p>
                           <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                            <span className="text-muted-foreground">Total Budgeted Spare:</span>
-                            <span className="font-medium">PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
+                            <span className="text-muted-foreground">Starting Balance:</span>
+                            <span className="font-medium">PHP {formatPHP(startingBalance)}</span>
+                            
+                            <span className="text-muted-foreground">Budgeted Spare:</span>
+                            <span className="font-medium">+ PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
                             
                             {giftedIncome > 0 && (
                               <>
@@ -1357,6 +1407,22 @@ export default function DashboardPage() {
                             <span className="text-muted-foreground">Borrowing Spent:</span>
                             <span className="text-rose-500 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
                           </div>
+                          
+                          {(totalBorrowedAmt > 0 || totalLentAmt > 0) && (
+                            <div className="mt-2 pt-2 border-t border-white/10 space-y-1">
+                              <p className="font-semibold text-white/90">True Cash Position:</p>
+                              <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                                <span className="text-muted-foreground">Available Spare:</span>
+                                <span className="font-medium">PHP {formatPHP(endingBalance)}</span>
+                                <span className="text-muted-foreground">Owed to Me (Active):</span>
+                                <span className="text-emerald-400 font-medium">+ PHP {formatPHP(totalLentAmt)}</span>
+                                <span className="text-muted-foreground">I Owe (Active):</span>
+                                <span className="text-rose-400 font-medium">- PHP {formatPHP(totalBorrowedAmt)}</span>
+                                <span className="text-white font-bold mt-0.5 border-t border-white/10 pt-0.5">True Balance:</span>
+                                <span className="text-white font-bold mt-0.5 border-t border-white/10 pt-0.5">PHP {formatPHP(endingBalance + totalLentAmt - totalBorrowedAmt)}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </TooltipContent>
                     </UITooltip>
@@ -1369,7 +1435,7 @@ export default function DashboardPage() {
               
               <div className="flex flex-col gap-0.5 mt-auto">
                 <span className="text-2xl font-semibold tabular-nums font-display text-white">
-                  PHP {formatPHP(remainingSpare)}
+                  PHP {formatPHP(endingBalance)}
                 </span>
                 {(totalSpareSpent > 0 || totalConsumableSpent > 0 || totalBorrowingSpent > 0) && (
                   <span className="text-[11px] text-white/75 leading-tight">
@@ -1687,12 +1753,12 @@ export default function DashboardPage() {
           tooltip="Total income before any deductions"
         />
         <StatCard
-          label="Net Income"
-          value={financialSummary?.netIncome ?? 0}
-          icon={DollarSign}
-          colorTheme="emerald"
+          label="Tax Amount"
+          value={taxAmount}
+          icon={Receipt}
+          colorTheme="rose"
           index={1}
-          tooltip="Gross Income minus Tax and Deductions"
+          tooltip="Total Taxes Deducted (Wage Tax + PT Tax)"
         />
         <StatCard
           label="Total Assets"

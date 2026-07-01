@@ -123,6 +123,8 @@ export interface PayPeriodInput {
   allocation_amounts: AllocationAmount[];
   // Additional income sources
   additional_income?: AdditionalIncome[];
+  // Optional date override for delayed entries
+  created_at?: string;
 }
 
 // Computed calculation result

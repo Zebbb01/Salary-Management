@@ -60,17 +60,22 @@ export const payPeriodSchema = z.object({
   include_part_time: z.boolean().default(false),
   // Wage tax (applies to first + second wage)
   include_wage_tax: z.boolean().default(false),
+  wage_tax_mode: z.enum(['percentage', 'fixed']).default('percentage'),
   wage_tax_rate: z
     .number()
     .min(0, 'Tax rate must be positive')
-    .max(100, 'Tax rate cannot exceed 100%'),
+    .max(100, 'Tax rate cannot exceed 100%')
+    .default(0),
+  wage_tax_amount: z.number().min(0, 'Tax amount must be positive').default(0),
   // Part-time tax (applies to part-time income)
   include_pt_tax: z.boolean().default(false),
+  pt_tax_mode: z.enum(['percentage', 'fixed']).default('percentage'),
   pt_tax_rate: z
     .number()
     .min(0, 'Tax rate must be positive')
     .max(100, 'Tax rate cannot exceed 100%')
     .default(0),
+  pt_tax_amount: z.number().min(0, 'Tax amount must be positive').default(0),
   // Legacy fields (kept for backward compat, default 0 for new periods)
   daily_consumable_rate: z.number().min(0).default(0),
   daily_consumable_days: z.number().int().min(0).max(31).default(0),
@@ -83,6 +88,8 @@ export const payPeriodSchema = z.object({
   allocation_amounts: z.array(allocationAmountSchema).default([]),
   // Additional income sources
   additional_income: z.array(additionalIncomeSchema).default([]),
+  // Optional date override
+  payroll_date: z.string().optional(),
 });
 
 // Auth validation

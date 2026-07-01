@@ -45,10 +45,12 @@ import {
   getCurrentUser,
   getPayPeriods,
   getSpareTransactions,
+  getSpareTransactionsInRange,
   getSpareTransactionsByUser,
   createSpareTransaction,
   deleteSpareTransaction,
   getSpareTotal,
+  getFinancialSummary,
   getBudgetAllocations,
   getSalaryConfig,
   upsertBillPayment,
@@ -60,6 +62,8 @@ import {
   deleteConsumableExpense,
 } from '@/features/salary/services/salary.service';
 import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType, PayFrequency, ConsumableExpense } from '@/features/salary/types/salary.types';
+import { PayslipScanner, type PayslipData } from '@/components/ui/payslip-scanner';
+import { MonthYearPicker } from '@/components/ui/month-year-picker';
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -210,6 +214,8 @@ export default function CalculatorPage() {
   const [periodSearch, setPeriodSearch] = useState('');
   const [spareTransactions, setSpareTransactions] = useState<SpareTransaction[]>([]);
   const [spareTotal, setSpareTotal] = useState(0);
+  const [startingBalance, setStartingBalance] = useState(0);
+  const [monthSpareAdded, setMonthSpareAdded] = useState(0);
   const [isLoadingSpare, setIsLoadingSpare] = useState(false);
   const [isAddingSpare, setIsAddingSpare] = useState(false);
   const [spareRows, setSpareRows] = useState<{ description: string; amount: string; date: string }[]>([
@@ -231,7 +237,7 @@ export default function CalculatorPage() {
   const [consumableRows, setConsumableRows] = useState<{ description: string; amount: string; date: string }[]>([
     { description: '', amount: '', date: new Date().toISOString().split('T')[0] },
   ]);
-  const [currentMonth] = useState(() => {
+  const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
@@ -252,9 +258,13 @@ export default function CalculatorPage() {
     include_second_wage: false,
     include_part_time: false,
     include_wage_tax: false,
+    wage_tax_mode: 'percentage',
     wage_tax_rate: 0,
+    wage_tax_amount: 0,
     include_pt_tax: false,
+    pt_tax_mode: 'percentage',
     pt_tax_rate: 0,
+    pt_tax_amount: 0,
     // Legacy fields (default 0)
     daily_consumable_rate: 0,
     daily_consumable_days: 0,
@@ -267,6 +277,7 @@ export default function CalculatorPage() {
     allocation_amounts: [],
     // Additional income sources
     additional_income: [],
+    payroll_date: new Date().toISOString().split('T')[0],
   };
 
   const {
@@ -276,6 +287,7 @@ export default function CalculatorPage() {
     control,
     reset,
     setValue,
+    getValues,
     formState: { errors },
   } = useForm<PayPeriodFormData>({
     resolver: zodResolver(payPeriodSchema) as Resolver<PayPeriodFormData>,
@@ -332,6 +344,18 @@ export default function CalculatorPage() {
   }, [loadAutocompleteSuggestions]);
 
   // ---------------------------------------------------------------------------
+  // Sync Payroll Date input when currentMonth changes
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const pd = getValues('payroll_date');
+    if (pd && !pd.startsWith(currentMonth)) {
+      // Create a date using the selected month, defaulting to the 1st day to ensure
+      // it saves inside the correct month bucket.
+      setValue('payroll_date', `${currentMonth}-01`, { shouldValidate: true });
+    }
+  }, [currentMonth, getValues, setValue]);
+
+  // ---------------------------------------------------------------------------
   // Load last saved pay period on mount to pre-fill the form
   // ---------------------------------------------------------------------------
   const loadLastPeriod = useCallback(async () => {
@@ -350,8 +374,7 @@ export default function CalculatorPage() {
 
         // Load consumable expenses for current month
         try {
-          const cMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-          const expenses = await getConsumableExpenses(cMonth);
+          const expenses = await getConsumableExpenses(currentMonth);
           setConsumableExpenses(expenses);
         } catch {
           // Silently fail
@@ -396,7 +419,6 @@ export default function CalculatorPage() {
       setSavedPeriods(periods);
 
       // Fetch current month's bill payments to calculate remaining balances
-      const currentMonth = new Date().toISOString().slice(0, 7);
       const existingBills = await getBillPayments(currentMonth);
       const billMap = new Map(existingBills.map((b) => [b.allocation_id, b]));
 
@@ -488,24 +510,113 @@ export default function CalculatorPage() {
     } finally {
       setIsLoadingLastPeriod(false);
     }
-  }, [reset, setValue]);
+  }, [reset, setValue, currentMonth]);
 
   useEffect(() => {
     loadLastPeriod();
   }, [loadLastPeriod]);
 
   // ---------------------------------------------------------------------------
-  // Load spare transactions when selected period changes
+  // AI Scanner Handler
   // ---------------------------------------------------------------------------
-  const loadSpareData = useCallback(async (periodId: string) => {
+  const handlePayslipData = useCallback((data: PayslipData) => {
+    if (data.gross_pay && data.gross_pay > 0) {
+      setValue('first_wage', data.gross_pay, { shouldValidate: true });
+      setValue('include_first_wage', true);
+    }
+    
+    // Convert specific deductions into Budget Allocations
+    const currentAllocations = getValues('allocation_amounts') || [];
+    let updatedAllocations = [...currentAllocations];
+    
+    const upsertAllocation = (category: string, amountRaw: number | string) => {
+      const amount = parseFloat(String(amountRaw));
+      if (isNaN(amount) || amount <= 0) return;
+      
+      const existingIdx = updatedAllocations.findIndex(a => 
+        a.category.toLowerCase() === category.toLowerCase()
+      );
+      
+      if (existingIdx >= 0) {
+        // Update existing allocation's 'actual' amount
+        updatedAllocations[existingIdx] = {
+          ...updatedAllocations[existingIdx],
+          actual: amount,
+          budgeted: updatedAllocations[existingIdx].budgeted || amount
+        };
+      } else {
+        // Create a new allocation for this deduction
+        updatedAllocations.push({
+          allocation_id: `temp-${Date.now()}-${Math.random()}`,
+          category,
+          budgeted: amount,
+          actual: amount,
+          allocation_type: 'expense',
+          is_fixed: true
+        });
+      }
+    };
+
+    upsertAllocation('SSS', data.sss || 0);
+    upsertAllocation('Pag-IBIG', data.pag_ibig || 0);
+    upsertAllocation('PhilHealth', data.philhealth || 0);
+    
+    if (data.loans && data.loans > 0) {
+      upsertAllocation('Loans', data.loans);
+    }
+    
+    // Set updated allocations back to the form
+    setValue('allocation_amounts', updatedAllocations, { shouldValidate: true });
+    
+    // Leave the generic total deduction as 0, as the user requested
+    setValue('first_wage_deduction', 0, { shouldValidate: true });
+
+    // Taxes
+    const taxVal = parseFloat(String(data.tax_withheld || 0));
+    const grossVal = parseFloat(String(data.gross_pay || 0));
+    if (!isNaN(taxVal) && taxVal > 0 && !isNaN(grossVal) && grossVal > 0) {
+      const taxRate = (taxVal / grossVal) * 100;
+      setValue('include_wage_tax', true);
+      setValue('wage_tax_mode', 'fixed');
+      setValue('wage_tax_amount', taxVal);
+      setValue('wage_tax_rate', parseFloat(taxRate.toFixed(2)), { shouldValidate: true });
+    }
+  }, [setValue, getValues]);
+
+  // ---------------------------------------------------------------------------
+  // Load spare transactions based on the selected month (date-based wallet)
+  // ---------------------------------------------------------------------------
+  const loadSpareData = useCallback(async (monthStr: string) => {
     setIsLoadingSpare(true);
     try {
-      const [txns, total] = await Promise.all([
-        getSpareTransactions(periodId),
-        getSpareTotal(periodId),
+      const year = monthStr.split('-')[0];
+      const month = monthStr.split('-')[1];
+      const dateFrom = `${year}-${month}-01`;
+      const lastDay = new Date(Number(year), Number(month), 0).getDate();
+      const dateTo = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+
+      // Get starting balance (up to day before dateFrom)
+      const dFrom = new Date(dateFrom);
+      dFrom.setDate(dFrom.getDate() - 1);
+      const prevDateTo = dFrom.toISOString().split('T')[0];
+
+      const [txns, monthSummary, startingSummary] = await Promise.all([
+        getSpareTransactionsInRange({ dateFrom, dateTo }),
+        getFinancialSummary({ dateFrom, dateTo }),
+        getFinancialSummary({ dateTo: prevDateTo }),
       ]);
+
       setSpareTransactions(txns);
-      setSpareTotal(total);
+      
+      const startingSpareAmount = (startingSummary?.totalSpare ?? 0) + (startingSummary?.giftedIncome ?? 0);
+      const startingBal = startingSpareAmount 
+        - (startingSummary?.totalSpareSpent ?? 0) 
+        - (startingSummary?.totalConsumableSpent ?? 0) 
+        - (startingSummary?.totalBorrowingExpensesSpent ?? 0);
+      
+      setStartingBalance(startingBal);
+      setMonthSpareAdded(monthSummary?.totalSpare ?? 0);
+      setSpareTotal(txns.reduce((sum, t) => sum + Number(t.amount || 0), 0));
     } catch {
       toast.error('Failed to load spare transactions.');
     } finally {
@@ -514,10 +625,8 @@ export default function CalculatorPage() {
   }, []);
 
   useEffect(() => {
-    if (selectedPeriodId) {
-      loadSpareData(selectedPeriodId);
-    }
-  }, [selectedPeriodId, loadSpareData]);
+    loadSpareData(currentMonth);
+  }, [currentMonth, loadSpareData]);
 
   // Add multiple spare transactions at once
   async function handleAddRows() {
@@ -529,10 +638,13 @@ export default function CalculatorPage() {
       toast.error('Please fill in at least one expense row.');
       return;
     }
-    if (!selectedPeriodId) {
-      toast.error('Please select a pay period.');
+    
+    const latestPeriod = savedPeriods[0];
+    if (!latestPeriod) {
+      toast.error('Please create at least one pay period in Payroll first.');
       return;
     }
+
     setIsAddingSpare(true);
     try {
       const user = await getCurrentUser();
@@ -542,7 +654,7 @@ export default function CalculatorPage() {
       }
       await Promise.all(
         validRows.map((row) =>
-          createSpareTransaction(user.id, selectedPeriodId, {
+          createSpareTransaction(user.id, latestPeriod.id, {
             description: row.description.trim(),
             amount: parseFloat(row.amount),
             transaction_date: row.date,
@@ -551,7 +663,7 @@ export default function CalculatorPage() {
       );
       toast.success(`${validRows.length} expense${validRows.length > 1 ? 's' : ''} added.`);
       setSpareRows([{ description: '', amount: '', date: new Date().toISOString().split('T')[0] }]);
-      await loadSpareData(selectedPeriodId);
+      await loadSpareData(currentMonth);
       await loadAutocompleteSuggestions();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add expenses.';
@@ -598,9 +710,7 @@ export default function CalculatorPage() {
     try {
       await deleteSpareTransaction(id);
       toast.success('Transaction deleted.');
-      if (selectedPeriodId) {
-        await loadSpareData(selectedPeriodId);
-      }
+      await loadSpareData(currentMonth);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to delete transaction.';
       toast.error(message);
@@ -633,11 +743,27 @@ export default function CalculatorPage() {
 
     // Compute separate tax amounts (on gross, before deductions)
     const wageBase = firstWage + secondWage;
-    const wageTaxRate = includeWageTax ? (Number(watchedValues.wage_tax_rate) || 0) : 0;
-    const wageTaxAmount = wageBase * (wageTaxRate / 100);
+    const wageTaxMode = watchedValues.wage_tax_mode || 'percentage';
+    let wageTaxAmount = 0;
+    if (includeWageTax) {
+      if (wageTaxMode === 'fixed') {
+        wageTaxAmount = Number(watchedValues.wage_tax_amount) || 0;
+      } else {
+        const rate = Number(watchedValues.wage_tax_rate) || 0;
+        wageTaxAmount = wageBase * (rate / 100);
+      }
+    }
 
-    const ptTaxRate = includePtTax ? (Number(watchedValues.pt_tax_rate) || 0) : 0;
-    const ptTaxAmount = partTime * (ptTaxRate / 100);
+    const ptTaxMode = watchedValues.pt_tax_mode || 'percentage';
+    let ptTaxAmount = 0;
+    if (includePtTax) {
+      if (ptTaxMode === 'fixed') {
+        ptTaxAmount = Number(watchedValues.pt_tax_amount) || 0;
+      } else {
+        const rate = Number(watchedValues.pt_tax_rate) || 0;
+        ptTaxAmount = partTime * (rate / 100);
+      }
+    }
 
     const calcInput: PayPeriodInput = {
       period_label: watchedValues.period_label || '',
@@ -700,10 +826,23 @@ export default function CalculatorPage() {
 
       // Compute separate tax amounts
       const wageBase = firstWage + secondWage;
-      const wTaxRate = data.include_wage_tax ? data.wage_tax_rate : 0;
-      const wageTaxAmount = wageBase * (wTaxRate / 100);
-      const pTaxRate = data.include_pt_tax ? data.pt_tax_rate : 0;
-      const ptTaxAmount = partTime * (pTaxRate / 100);
+      let wageTaxAmount = 0;
+      if (data.include_wage_tax) {
+        if (data.wage_tax_mode === 'fixed') {
+          wageTaxAmount = data.wage_tax_amount || 0;
+        } else {
+          wageTaxAmount = wageBase * ((data.wage_tax_rate || 0) / 100);
+        }
+      }
+
+      let ptTaxAmount = 0;
+      if (data.include_pt_tax) {
+        if (data.pt_tax_mode === 'fixed') {
+          ptTaxAmount = data.pt_tax_amount || 0;
+        } else {
+          ptTaxAmount = partTime * ((data.pt_tax_rate || 0) / 100);
+        }
+      }
 
       const saveInput: PayPeriodInput = {
         period_label: data.period_label,
@@ -725,20 +864,20 @@ export default function CalculatorPage() {
         additional_income: additionalIncomeRows
           .filter((r) => r.label.trim() && !isNaN(parseFloat(r.amount)) && parseFloat(r.amount) > 0)
           .map((r) => ({ label: r.label.trim(), amount: parseFloat(r.amount) || 0 })),
+        created_at: data.payroll_date ? new Date(data.payroll_date).toISOString() : undefined,
       };
 
       await createPayPeriod(user.id, saveInput);
       toast.success('Pay period saved successfully.');
 
       // Sync bill payments: only mark as fully paid when actual >= budgeted
-      const currentMonth = new Date().toISOString().slice(0, 7);
       const existingBills = await getBillPayments(currentMonth);
-      const existingBillMap = new Map(existingBills.map((b) => [b.allocation_id, b]));
+      const billMap = new Map(existingBills.map((b) => [b.allocation_id, b]));
 
       for (const alloc of (data.allocation_amounts || [])) {
         if (alloc.actual > 0) {
           try {
-            const existing = existingBillMap.get(alloc.allocation_id);
+            const existing = billMap.get(alloc.allocation_id);
             const previousAmount = existing ? existing.amount : 0;
             const totalPaid = previousAmount + alloc.actual;
             const isFullyPaid = totalPaid >= alloc.budgeted;
@@ -777,7 +916,8 @@ export default function CalculatorPage() {
       });
 
       // Update form for next period
-      setValue('period_label', generatePeriodLabel(new Date(), payFrequency));
+      const nextDate = data.payroll_date ? new Date(data.payroll_date) : new Date();
+      setValue('period_label', generatePeriodLabel(nextDate, payFrequency));
       setValue('allocation_amounts', nextAllocAmounts);
 
       // Refresh saved periods list for spare tracker
@@ -797,10 +937,9 @@ export default function CalculatorPage() {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-  // Selected period for spare tracker
+  // Selected period for spare tracker (Fallback for database saving)
   const selectedPeriod = savedPeriods.find((p) => p.id === selectedPeriodId);
-  const originalSpare = selectedPeriod?.spare_amount ?? 0;
-  const remainingSpare = originalSpare - spareTotal;
+  const remainingSpare = startingBalance + monthSpareAdded - spareTotal;
 
   // Period label options based on pay frequency
   const periodLabelOptions = (() => {
@@ -838,12 +977,21 @@ export default function CalculatorPage() {
     }
   })();
 
+  const [cYear, cMonthStr] = currentMonth.split('-');
+  const pickerValue = { year: Number(cYear), month: Number(cMonthStr) - 1 };
+
+  const handleMonthChange = (val: { month: number; year: number } | null) => {
+    if (val) {
+      setCurrentMonth(`${val.year}-${String(val.month + 1).padStart(2, '0')}`);
+    }
+  };
+
   return (
     <div>
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Tabs defaultValue="calculator">
-          <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-            <TabsList className="flex w-full items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
+          <div className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 mb-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 flex justify-between items-center gap-4">
+            <TabsList className="flex items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
               <TabsTrigger value="calculator" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
                 <Calculator className="h-4 w-4" />
                 <span className="tab-label-reveal">Payroll</span>
@@ -857,6 +1005,16 @@ export default function CalculatorPage() {
                 <span className="tab-label-reveal">Consumable</span>
               </TabsTrigger>
             </TabsList>
+            
+            <div className="shrink-0 hidden sm:flex items-center gap-2">
+              <MonthYearPicker value={pickerValue} onChange={handleMonthChange} />
+              <PayslipScanner onDataExtracted={handlePayslipData} />
+            </div>
+          </div>
+          
+          <div className="mb-4 sm:hidden flex justify-end gap-2">
+             <MonthYearPicker value={pickerValue} onChange={handleMonthChange} />
+             <PayslipScanner onDataExtracted={handlePayslipData} />
           </div>
 
           {/* ============== CALCULATOR TAB ============== */}
@@ -1136,28 +1294,79 @@ export default function CalculatorPage() {
                       >
                         Wage Tax
                       </Label>
-                      <span className="text-xs text-muted-foreground">(1st + 2nd Wage)</span>
+                      <div className="flex bg-muted/50 rounded-md p-1 ml-auto shrink-0 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setValue('wage_tax_mode', 'percentage', { shouldValidate: true })}
+                          disabled={!includeWageTax}
+                          className={cn(
+                            "px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all",
+                            watchedValues.wage_tax_mode !== 'fixed' && includeWageTax
+                              ? "bg-background shadow-sm text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
+                            !includeWageTax && "opacity-40 cursor-not-allowed"
+                          )}
+                        >
+                          %
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setValue('wage_tax_mode', 'fixed', { shouldValidate: true })}
+                          disabled={!includeWageTax}
+                          className={cn(
+                            "px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all",
+                            watchedValues.wage_tax_mode === 'fixed' && includeWageTax
+                              ? "bg-background shadow-sm text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
+                            !includeWageTax && "opacity-40 cursor-not-allowed"
+                          )}
+                        >
+                          ₱
+                        </button>
+                      </div>
                       {!includeWageTax && (
-                        <Badge variant="outline" className="ml-auto text-xs">Off</Badge>
+                        <Badge variant="outline" className="ml-2 text-xs">Off</Badge>
                       )}
                     </div>
                     <div className="relative">
-                      <Input
-                        id="wage_tax_rate"
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="100"
-                        disabled={!includeWageTax}
-                        className={cn(
-                          'h-9 pr-10 tabular-nums text-sm',
-                          !includeWageTax && 'opacity-40 cursor-not-allowed'
-                        )}
-                        {...register('wage_tax_rate', { valueAsNumber: true })}
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
-                        %
-                      </span>
+                      {watchedValues.wage_tax_mode === 'fixed' ? (
+                        <>
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                            ₱
+                          </span>
+                          <Input
+                            id="wage_tax_amount"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            disabled={!includeWageTax}
+                            className={cn(
+                              'h-9 pl-8 tabular-nums text-sm',
+                              !includeWageTax && 'opacity-40 cursor-not-allowed'
+                            )}
+                            {...register('wage_tax_amount', { valueAsNumber: true })}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            id="wage_tax_rate"
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="100"
+                            disabled={!includeWageTax}
+                            className={cn(
+                              'h-9 pr-8 tabular-nums text-sm',
+                              !includeWageTax && 'opacity-40 cursor-not-allowed'
+                            )}
+                            {...register('wage_tax_rate', { valueAsNumber: true })}
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                            %
+                          </span>
+                        </>
+                      )}
                     </div>
                     <p className="text-sm tabular-nums text-muted-foreground">
                       Wage Tax:{' '}
@@ -1187,27 +1396,79 @@ export default function CalculatorPage() {
                       >
                         Part-Time Tax
                       </Label>
+                      <div className="flex bg-muted/50 rounded-md p-1 ml-auto shrink-0 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setValue('pt_tax_mode', 'percentage', { shouldValidate: true })}
+                          disabled={!includePtTax}
+                          className={cn(
+                            "px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all",
+                            watchedValues.pt_tax_mode !== 'fixed' && includePtTax
+                              ? "bg-background shadow-sm text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
+                            !includePtTax && "opacity-40 cursor-not-allowed"
+                          )}
+                        >
+                          %
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setValue('pt_tax_mode', 'fixed', { shouldValidate: true })}
+                          disabled={!includePtTax}
+                          className={cn(
+                            "px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all",
+                            watchedValues.pt_tax_mode === 'fixed' && includePtTax
+                              ? "bg-background shadow-sm text-foreground"
+                              : "text-muted-foreground hover:text-foreground",
+                            !includePtTax && "opacity-40 cursor-not-allowed"
+                          )}
+                        >
+                          ₱
+                        </button>
+                      </div>
                       {!includePtTax && (
-                        <Badge variant="outline" className="ml-auto text-xs">Off</Badge>
+                        <Badge variant="outline" className="ml-2 text-xs">Off</Badge>
                       )}
                     </div>
                     <div className="relative">
-                      <Input
-                        id="pt_tax_rate"
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="100"
-                        disabled={!includePtTax}
-                        className={cn(
-                          'h-9 pr-10 tabular-nums text-sm',
-                          !includePtTax && 'opacity-40 cursor-not-allowed'
-                        )}
-                        {...register('pt_tax_rate', { valueAsNumber: true })}
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
-                        %
-                      </span>
+                      {watchedValues.pt_tax_mode === 'fixed' ? (
+                        <>
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                            ₱
+                          </span>
+                          <Input
+                            id="pt_tax_amount"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            disabled={!includePtTax}
+                            className={cn(
+                              'h-9 pl-8 tabular-nums text-sm',
+                              !includePtTax && 'opacity-40 cursor-not-allowed'
+                            )}
+                            {...register('pt_tax_amount', { valueAsNumber: true })}
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <Input
+                            id="pt_tax_rate"
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="100"
+                            disabled={!includePtTax}
+                            className={cn(
+                              'h-9 pr-8 tabular-nums text-sm',
+                              !includePtTax && 'opacity-40 cursor-not-allowed'
+                            )}
+                            {...register('pt_tax_rate', { valueAsNumber: true })}
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
+                            %
+                          </span>
+                        </>
+                      )}
                     </div>
                     <p className="text-sm tabular-nums text-muted-foreground">
                       PT Tax:{' '}
@@ -1272,18 +1533,14 @@ export default function CalculatorPage() {
                                 P {formatPHP(budgeted)}
                               </span>
                               <div className="w-28">
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
+                                <AllocationInput
                                   disabled={isFullyPaid}
-                                  readOnly={isFixed}
                                   className={cn(
-                                    'h-8 tabular-nums text-sm',
-                                    isFullyPaid && 'opacity-40 cursor-not-allowed',
-                                    isFixed && 'opacity-70 cursor-not-allowed bg-muted/20 border-muted focus-visible:ring-0'
+                                    'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm tabular-nums transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+                                    isFullyPaid && 'opacity-40 cursor-not-allowed'
                                   )}
-                                  {...register(`allocation_amounts.${index}.actual`, { valueAsNumber: true })}
+                                  value={actual}
+                                  onChange={(val) => setValue(`allocation_amounts.${index}.actual`, val, { shouldValidate: true })}
                                 />
                               </div>
                               {isFullyPaid ? (
@@ -1341,24 +1598,20 @@ export default function CalculatorPage() {
                                 </div>
                                 <div>
                                   <span className="text-[11px] text-muted-foreground">Actual</span>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
+                                  <AllocationInput
                                     disabled={isFullyPaid}
-                                    readOnly={isFixed}
                                     className={cn(
-                                      'h-9 tabular-nums text-sm',
-                                      isFullyPaid && 'opacity-40 cursor-not-allowed',
-                                      isFixed && 'opacity-70 cursor-not-allowed bg-muted/20 border-muted focus-visible:ring-0'
+                                      'h-9 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm tabular-nums transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+                                      isFullyPaid && 'opacity-40 cursor-not-allowed'
                                     )}
-                                    {...register(`allocation_amounts.${index}.actual`, { valueAsNumber: true })}
+                                    value={actual}
+                                    onChange={(val) => setValue(`allocation_amounts.${index}.actual`, val, { shouldValidate: true })}
                                   />
                                 </div>
                               </div>
                             </div>
                             {/* Quick-fill buttons */}
-                            {!isFullyPaid && !isFixed && budgeted > 0 && (
+                            {!isFullyPaid && budgeted > 0 && (
                               <div className="flex items-center gap-1.5 sm:pl-[calc(100%-12rem-5rem-1.5rem)]">
                                 <button
                                   type="button"
@@ -1409,10 +1662,24 @@ export default function CalculatorPage() {
                 </div>
               </SectionCard>
 
-              {/* ----- Period Label ----- */}
+              {/* ----- Payroll Date & Period Label ----- */}
               <motion.div variants={fadeIn}>
                 <Card>
-                  <CardContent className="pt-1">
+                  <CardContent className="pt-3 pb-3 space-y-4">
+                    <FormField
+                      id="payroll_date"
+                      label="Payroll Date"
+                      error={errors.payroll_date?.message}
+                    >
+                      <Input
+                        id="payroll_date"
+                        type="date"
+                        className="h-10 text-sm"
+                        aria-invalid={!!errors.payroll_date}
+                        {...register('payroll_date')}
+                      />
+                    </FormField>
+
                     <FormField
                       id="period_label"
                       label="Period Label"
@@ -1434,10 +1701,11 @@ export default function CalculatorPage() {
                             if (type === 'custom') {
                               setValue('period_label', '');
                             } else {
-                              const now = new Date();
-                              const month = now.toLocaleString('en-US', { month: 'long' });
-                              const year = now.getFullYear();
-                              const formattedDate = now.toLocaleString('en-US', {
+                              const pDateStr = watch('payroll_date');
+                              const d = pDateStr ? new Date(pDateStr) : new Date();
+                              const month = d.toLocaleString('en-US', { month: 'long' });
+                              const year = d.getFullYear();
+                              const formattedDate = d.toLocaleString('en-US', {
                                 month: 'long',
                                 day: 'numeric',
                                 year: 'numeric',
@@ -1689,87 +1957,11 @@ export default function CalculatorPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="relative">
-                      <Label htmlFor="spare-period" className="mb-1.5 text-muted-foreground">
-                        Pay Period
-                      </Label>
-                      {/* Custom searchable dropdown */}
-                      <button
-                        type="button"
-                        id="spare-period"
-                        onClick={() => setPeriodDropdownOpen((o) => !o)}
-                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 cursor-pointer"
-                      >
-                        <span className="truncate text-left">
-                          {savedPeriods.length === 0
-                            ? 'No saved periods'
-                            : savedPeriods.find((p) => p.id === selectedPeriodId)?.period_label ?? 'Select period'}
-                        </span>
-                        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                      {periodDropdownOpen && (
-                        <>
-                          {/* Backdrop */}
-                          <div
-                            className="fixed inset-0 z-40"
-                            onClick={() => { setPeriodDropdownOpen(false); setPeriodSearch(''); }}
-                          />
-                          {/* Dropdown panel */}
-                          <div className="absolute left-0 right-0 z-50 mt-1 max-h-64 overflow-hidden rounded-md border border-input bg-background shadow-lg">
-                            {/* Search input */}
-                            <div className="flex items-center gap-2 border-b border-input px-3 py-2">
-                              <Search className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <input
-                                type="text"
-                                placeholder="Search periods..."
-                                value={periodSearch}
-                                onChange={(e) => setPeriodSearch(e.target.value)}
-                                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/60"
-                                autoFocus
-                              />
-                            </div>
-                            {/* Options */}
-                            <div className="max-h-48 overflow-y-auto p-1">
-                              {savedPeriods
-                                .filter((p) => p.period_label.toLowerCase().includes(periodSearch.toLowerCase()))
-                                .map((p) => {
-                                  const isSelected = p.id === selectedPeriodId;
-                                  const date = p.created_at
-                                    ? new Date(p.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-                                    : '';
-                                  return (
-                                    <button
-                                      key={p.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedPeriodId(p.id);
-                                        setPeriodDropdownOpen(false);
-                                        setPeriodSearch('');
-                                      }}
-                                      className={cn(
-                                        'flex w-full items-center gap-2 rounded-sm px-2 py-2 text-sm transition-colors cursor-pointer',
-                                        isSelected
-                                          ? 'bg-primary/10 text-primary'
-                                          : 'hover:bg-muted/60'
-                                      )}
-                                    >
-                                      <Check className={cn('h-3.5 w-3.5 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')} />
-                                      <div className="flex flex-col items-start min-w-0">
-                                        <span className="truncate w-full text-left">{p.period_label}</span>
-                                        <span className="text-[11px] text-muted-foreground">
-                                          {date}{p.spare_amount != null ? ` · Spare: P ${formatPHP(p.spare_amount)}` : ''}
-                                        </span>
-                                      </div>
-                                    </button>
-                                  );
-                                })}
-                              {savedPeriods.filter((p) => p.period_label.toLowerCase().includes(periodSearch.toLowerCase())).length === 0 && (
-                                <p className="px-3 py-4 text-center text-sm text-muted-foreground">No periods found</p>
-                              )}
-                            </div>
-                          </div>
-                        </>
-                      )}
+                    <div className="flex items-center justify-between text-sm text-muted-foreground">
+                      <span>Tracking Month:</span>
+                      <span className="font-semibold text-foreground">
+                        {new Date(currentMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                      </span>
                     </div>
 
                     <Separator />
@@ -1869,7 +2061,7 @@ export default function CalculatorPage() {
                           type="button"
                           size="sm"
                           onClick={handleAddRows}
-                          disabled={isAddingSpare || !selectedPeriodId}
+                          disabled={isAddingSpare || savedPeriods.length === 0}
                         >
                           {isAddingSpare ? (
                             <>
@@ -1969,27 +2161,38 @@ export default function CalculatorPage() {
               <div className="w-full lg:sticky lg:top-32 lg:w-2/5 lg:self-start">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="flex items-center gap-2">Spare Summary <TooltipProvider><UITooltip><TooltipTrigger className="flex"><Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" /></TooltipTrigger><TooltipContent side="top">Remaining unallocated funds tracking over time.</TooltipContent></UITooltip></TooltipProvider></CardTitle>
+                      <CardTitle className="flex items-center gap-2">
+                        Wallet Summary
+                        <TooltipProvider>
+                          <UITooltip>
+                            <TooltipTrigger className="flex">
+                              <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              Running wallet balance for the selected month.
+                            </TooltipContent>
+                          </UITooltip>
+                        </TooltipProvider>
+                      </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
                         <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Pay Period</span>
-                          <span className="font-medium text-xs text-right max-w-[200px] truncate">
-                            {selectedPeriod?.period_label ?? 'None selected'}
-                          </span>
-                        </div>
-
-                        <Separator />
-
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Original Spare</span>
+                          <span className="text-muted-foreground">Starting Wallet (Liquid Cash)</span>
                           <span className="tabular-nums font-display font-medium">
-                            P {formatPHP(originalSpare)}
+                            P {formatPHP(startingBalance)}
                           </span>
                         </div>
+
                         <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Total Spent</span>
+                          <span className="text-muted-foreground">New Spare Added</span>
+                          <span className="tabular-nums font-display font-medium text-emerald-500">
+                            +P {formatPHP(monthSpareAdded)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">Spent this Month</span>
                           <span className="tabular-nums font-display font-medium text-rose-500">
                             -P {formatPHP(spareTotal)}
                           </span>
@@ -2004,7 +2207,7 @@ export default function CalculatorPage() {
                             ) : (
                               <TrendingDown className="h-5 w-5 text-rose-500" />
                             )}
-                            <span className="text-sm font-semibold">Remaining</span>
+                            <span className="text-sm font-semibold">Remaining Wallet</span>
                           </div>
                           <span
                             className={cn(
@@ -2313,6 +2516,74 @@ export default function CalculatorPage() {
         </Tabs>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Helper for Allocation Input to prevent React Hook Form re-render locking
+// ---------------------------------------------------------------------------
+function AllocationInput({
+  value,
+  onChange,
+  disabled,
+  className
+}: {
+  value: number;
+  onChange: (val: number) => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const [localVal, setLocalVal] = useState<string>(value?.toString() || '0');
+
+  // Sync external changes (e.g. Full/Clear buttons) but don't interrupt typing
+  useEffect(() => {
+    const parsed = parseFloat(localVal);
+    const isLocalEmptyOrNaN = localVal === '' || Number.isNaN(parsed);
+    
+    // If the external value is 0 and we are typing (empty or invalid), don't overwrite
+    if (value === 0 && isLocalEmptyOrNaN) {
+      return;
+    }
+    
+    // Otherwise if it genuinely changed externally, sync it
+    if (parsed !== value) {
+      setLocalVal(value?.toString() || '0');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVal = e.target.value;
+    setLocalVal(newVal);
+    
+    const parsed = parseFloat(newVal);
+    if (!Number.isNaN(parsed)) {
+      onChange(parsed);
+    } else if (newVal === '') {
+      onChange(0);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      step="0.01"
+      min="0"
+      disabled={disabled}
+      className={className}
+      value={localVal}
+      onChange={handleChange}
+      onBlur={() => {
+        // Clean up dangling dots or empty states on blur
+        const parsed = parseFloat(localVal);
+        if (Number.isNaN(parsed)) {
+          setLocalVal('0');
+          onChange(0);
+        } else {
+          setLocalVal(parsed.toString());
+        }
+      }}
+    />
   );
 }
 

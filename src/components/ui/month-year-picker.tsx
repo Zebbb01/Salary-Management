@@ -218,14 +218,17 @@ export function MonthYearPicker({
 }
 
 /**
- * Utility: Convert MonthYearSelection to dateFrom/dateTo ISO strings
+ * Utility: Convert MonthYearSelection to dateFrom/dateTo timezone-safe strings.
+ * Uses YYYY-MM-DD format to avoid UTC offset issues (e.g. midnight in UTC+8
+ * becoming the previous day in UTC via .toISOString()).
  */
 export function monthYearToDateRange(selection: MonthYearSelection): {
   dateFrom: string;
   dateTo: string;
 } {
   const { month, year } = selection;
-  const dateFrom = new Date(year, month, 1).toISOString();
-  const dateTo = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const dateFrom = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const dateTo = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59`;
   return { dateFrom, dateTo };
 }

@@ -58,6 +58,7 @@ import {
   getPayPeriods,
   deletePayPeriod,
   getSpareTransactions,
+  getSpareTransactionsInRange,
   getBillPayments,
   getConsumableMonthlyRecords,
   getConsumableExpenses,
@@ -944,7 +945,7 @@ export default function HistoryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
-  const [dateFilter, setDateFilter] = useState<'all-time' | 'this-month' | 'last-month' | 'this-year' | 'custom'>('all-time');
+  const [dateFilter, setDateFilter] = useState<'all-time' | 'this-month' | 'last-month' | 'this-year' | 'custom'>('this-month');
   const [customMonth, setCustomMonth] = useState<MonthYearSelection | null>(null);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -990,23 +991,70 @@ export default function HistoryPage() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
+
+    // Timezone-safe helpers to avoid UTC offset issues
+    function localDate(y: number, m: number, d: number): string {
+      return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    function localDateEnd(y: number, m: number, d: number): string {
+      return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}T23:59:59`;
+    }
+    function lastDay(y: number, m: number): number {
+      return new Date(y, m + 1, 0).getDate();
+    }
+
     switch (dateFilter) {
       case 'this-month':
-        return { from: new Date(year, month, 1).toISOString(), to: new Date(year, month + 1, 0, 23, 59, 59).toISOString() };
-      case 'last-month':
-        return { from: new Date(year, month - 1, 1).toISOString(), to: new Date(year, month, 0, 23, 59, 59).toISOString() };
+        return { from: localDate(year, month, 1), to: localDateEnd(year, month, lastDay(year, month)) };
+      case 'last-month': {
+        const lm = new Date(year, month - 1, 1);
+        const lmY = lm.getFullYear();
+        const lmM = lm.getMonth();
+        return { from: localDate(lmY, lmM, 1), to: localDateEnd(lmY, lmM, lastDay(lmY, lmM)) };
+      }
       case 'this-year':
-        return { from: new Date(year, 0, 1).toISOString(), to: new Date(year, 11, 31, 23, 59, 59).toISOString() };
+        return { from: localDate(year, 0, 1), to: localDateEnd(year, 11, 31) };
       case 'custom':
         if (customMonth) {
-          const range = monthYearToDateRange(customMonth);
-          return { from: range.dateFrom, to: range.dateTo };
+          const cY = customMonth.year;
+          const cM = customMonth.month;
+          return { from: localDate(cY, cM, 1), to: localDateEnd(cY, cM, lastDay(cY, cM)) };
         }
         return null;
       default:
         return null;
     }
   }, [dateFilter, customMonth]);
+
+  const [startingBalance, setStartingBalance] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStartingBalance() {
+      if (!dateRange || !dateRange.from) {
+        setStartingBalance(0);
+        return;
+      }
+      try {
+        const dFrom = new Date(dateRange.from);
+        dFrom.setDate(dFrom.getDate() - 1);
+        const { getFinancialSummary } = await import('@/features/salary/services/salary.service');
+        const summary = await getFinancialSummary({ dateTo: dFrom.toISOString() });
+        if (!cancelled && summary) {
+          const startingSpareAmount = (summary.totalSpare ?? 0) + (summary.giftedIncome ?? 0);
+          const bal = startingSpareAmount 
+            - (summary.totalSpareSpent ?? 0) 
+            - (summary.totalConsumableSpent ?? 0) 
+            - (summary.totalBorrowingExpensesSpent ?? 0);
+          setStartingBalance(bal);
+        }
+      } catch {
+        // Silently handle
+      }
+    }
+    loadStartingBalance();
+    return () => { cancelled = true; };
+  }, [dateRange]);
 
 
 
@@ -1127,26 +1175,42 @@ export default function HistoryPage() {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth();
+
+    function localDate(y: number, m: number, d: number): string {
+      return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    function localDateEnd(y: number, m: number, d: number): string {
+      return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}T23:59:59`;
+    }
+    function lastDay(y: number, m: number): number {
+      return new Date(y, m + 1, 0).getDate();
+    }
+
     let dateFrom: string;
     let dateTo: string;
     switch (dateFilter) {
       case 'this-month':
-        dateFrom = new Date(year, month, 1).toISOString();
-        dateTo = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+        dateFrom = localDate(year, month, 1);
+        dateTo = localDateEnd(year, month, lastDay(year, month));
         break;
-      case 'last-month':
-        dateFrom = new Date(year, month - 1, 1).toISOString();
-        dateTo = new Date(year, month, 0, 23, 59, 59).toISOString();
+      case 'last-month': {
+        const lm = new Date(year, month - 1, 1);
+        const lmY = lm.getFullYear();
+        const lmM = lm.getMonth();
+        dateFrom = localDate(lmY, lmM, 1);
+        dateTo = localDateEnd(lmY, lmM, lastDay(lmY, lmM));
         break;
+      }
       case 'this-year':
-        dateFrom = new Date(year, 0, 1).toISOString();
-        dateTo = new Date(year, 11, 31, 23, 59, 59).toISOString();
+        dateFrom = localDate(year, 0, 1);
+        dateTo = localDateEnd(year, 11, 31);
         break;
       case 'custom':
         if (customMonth) {
-          const range = monthYearToDateRange(customMonth);
-          dateFrom = range.dateFrom;
-          dateTo = range.dateTo;
+          const cY = customMonth.year;
+          const cM = customMonth.month;
+          dateFrom = localDate(cY, cM, 1);
+          dateTo = localDateEnd(cY, cM, lastDay(cY, cM));
         } else {
           return periods;
         }
@@ -1219,23 +1283,18 @@ export default function HistoryPage() {
     let cancelled = false;
     async function loadSpareTransactions() {
       try {
-        const results = await Promise.all(
-          filteredPeriods.map((p) => getSpareTransactions(p.id))
-        );
+        const opts = dateRange ? { dateFrom: dateRange.from, dateTo: dateRange.to } : undefined;
+        const results = await getSpareTransactionsInRange(opts);
         if (!cancelled) {
-          setSpareTransactions(results.flat());
+          setSpareTransactions(results);
         }
       } catch {
         // Silently handle
       }
     }
-    if (filteredPeriods.length > 0) {
-      loadSpareTransactions();
-    } else {
-      setSpareTransactions([]);
-    }
+    loadSpareTransactions();
     return () => { cancelled = true; };
-  }, [filteredPeriods]);
+  }, [dateRange]);
 
   // Compute overall aggregates
   const overallStats = useMemo(() => {
@@ -1276,7 +1335,7 @@ export default function HistoryPage() {
       .reduce((sum, b) => sum + Number(b.amount), 0);
       
     const totalOutflow = totalAllocated + totalSpareSpent + consumableSpent + totalBorrowingSpent + totalLentForgiven;
-    const remainingSpare = (totalSpareBudget + giftedIncome) - totalSpareSpent - consumableSpent - totalBorrowingSpent;
+    const remainingSpare = startingBalance + (totalSpareBudget + giftedIncome) - totalSpareSpent - consumableSpent - totalBorrowingSpent;
     const remainingConsumable = consumableBudget - consumableSpent;
     const netBorrowing = activeLent - activeBorrowed;
 
@@ -1297,8 +1356,9 @@ export default function HistoryPage() {
       totalLentForgiven,
       totalGrossIncome,
       giftedIncome,
+      startingBalance,
     };
-  }, [filteredPeriods, totalSpareSpent, consumableRecords, borrowingHistory]);
+  }, [filteredPeriods, totalSpareSpent, consumableRecords, borrowingHistory, startingBalance]);
 
   // Combined chart data aggregator
   const overallChartData = useMemo(() => {
@@ -1430,8 +1490,8 @@ export default function HistoryPage() {
       }
     });
 
-    // Add spare spent to total expenses to match Dashboard's monthlyExpenses calculation
-    totalExpenses += totalSpareSpent;
+    // We no longer add spare spent to total expenses here
+    // totalExpenses += totalSpareSpent;
     
     const totalSpending = totalExpenses + totalSavings;
     const remainingSpare = totalSpareAllocated - totalSpareSpent;
@@ -1635,8 +1695,11 @@ export default function HistoryPage() {
                   <div className="space-y-1">
                     <p className="font-semibold mb-1">Calculation Breakdown:</p>
                     <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                      <span className="text-muted-foreground">Starting Balance:</span>
+                      <span className="font-medium">PHP {formatPHP(overallStats.startingBalance)}</span>
+
                       <span className="text-muted-foreground">Total Spare Budget:</span>
-                      <span className="font-medium">PHP {formatPHP(overallStats.totalSpareBudget)}</span>
+                      <span className="font-medium">+ PHP {formatPHP(overallStats.totalSpareBudget)}</span>
                       
                       {overallStats.giftedIncome > 0 && (
                         <>
@@ -1654,6 +1717,22 @@ export default function HistoryPage() {
                       <span className="text-muted-foreground">Borrowing Expenses:</span>
                       <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.totalBorrowingSpent)}</span>
                     </div>
+
+                    {(overallStats.activeBorrowed > 0 || overallStats.activeLent > 0) && (
+                      <div className="mt-2 pt-2 border-t border-border/20 space-y-1">
+                        <p className="font-semibold text-foreground/90">True Cash Position:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-muted-foreground">Available Spare:</span>
+                          <span className="font-medium">PHP {formatPHP(overallStats.remainingSpare)}</span>
+                          <span className="text-muted-foreground">Owed to Me (Active):</span>
+                          <span className="text-emerald-500 font-medium">+ PHP {formatPHP(overallStats.activeLent)}</span>
+                          <span className="text-muted-foreground">I Owe (Active):</span>
+                          <span className="text-rose-500 font-medium">- PHP {formatPHP(overallStats.activeBorrowed)}</span>
+                          <span className="text-foreground font-bold mt-0.5 border-t border-border/20 pt-0.5">True Balance:</span>
+                          <span className="text-foreground font-bold mt-0.5 border-t border-border/20 pt-0.5">PHP {formatPHP(overallStats.remainingSpare + overallStats.activeLent - overallStats.activeBorrowed)}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 }
               />

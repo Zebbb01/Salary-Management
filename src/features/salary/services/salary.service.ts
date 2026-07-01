@@ -281,20 +281,26 @@ export async function createPayPeriod(
   const calc: CalculationResult = calculatePayPeriod(input);
 
   // Strip calculation-only fields that don't exist as DB columns
-  const { wage_tax_amount, pt_tax_amount, ...dbFields } = input;
+  const { wage_tax_amount, pt_tax_amount, created_at, ...dbFields } = input;
+
+  const insertData: any = {
+    user_id: userId,
+    ...dbFields,
+    total_income: calc.totalIncome,
+    total_tax: calc.totalTax,
+    total_deductions: calc.totalDeductions,
+    total_expenses: calc.totalExpenses,
+    total_savings: calc.totalSavings,
+    spare_amount: calc.spareAmount,
+  };
+
+  if (created_at) {
+    insertData.created_at = created_at;
+  }
 
   const { data, error } = await supabase
     .from('pay_periods')
-    .insert({
-      user_id: userId,
-      ...dbFields,
-      total_income: calc.totalIncome,
-      total_tax: calc.totalTax,
-      total_deductions: calc.totalDeductions,
-      total_expenses: calc.totalExpenses,
-      total_savings: calc.totalSavings,
-      spare_amount: calc.spareAmount,
-    })
+    .insert(insertData)
     .select()
     .single();
 
@@ -416,26 +422,15 @@ export async function getSpareTotal(payPeriodId: string): Promise<number> {
 export async function getSpareTransactionsInRange(
   opts?: { dateFrom?: string; dateTo?: string }
 ): Promise<SpareTransaction[]> {
-  // Get period IDs in the date range
-  let periodQuery = supabase
-    .from('pay_periods')
-    .select('id');
-
-  if (opts?.dateFrom) periodQuery = periodQuery.gte('created_at', opts.dateFrom);
-  if (opts?.dateTo) periodQuery = periodQuery.lte('created_at', opts.dateTo);
-
-  const { data: periods, error: pError } = await periodQuery;
-  if (pError) throw pError;
-
-  const periodIds = (periods ?? []).map((p) => p.id).filter(Boolean);
-  if (periodIds.length === 0) return [];
-
-  const { data, error } = await supabase
+  let query = supabase
     .from('spare_transactions')
     .select('*')
-    .in('pay_period_id', periodIds)
     .order('transaction_date', { ascending: false });
 
+  if (opts?.dateFrom) query = query.gte('transaction_date', opts.dateFrom.substring(0, 10));
+  if (opts?.dateTo) query = query.lte('transaction_date', opts.dateTo.substring(0, 10));
+
+  const { data, error } = await query;
   if (error) throw error;
   return data ?? [];
 }
@@ -567,26 +562,28 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   const totalExpensesSum = periods.reduce((s, p) => s + Number(p.total_expenses ?? 0), 0);
   const totalSpare = periods.reduce((s, p) => s + Number(p.spare_amount ?? 0), 0);
 
-  // Fetch spare transactions for ALL periods in range to compute total spent
+  // Fetch spare transactions for the date range to compute total spent
   let totalSpareSpent = 0;
   const spareSpentByPeriod = new Map<string, number>();
-  const periodIds = periods.map((p) => p.id).filter(Boolean);
-  if (periodIds.length > 0) {
-    const { data: spareData, error: spareError } = await supabase
-      .from('spare_transactions')
-      .select('amount, pay_period_id')
-      .in('pay_period_id', periodIds);
+  
+  let spareQuery = supabase
+    .from('spare_transactions')
+    .select('amount, pay_period_id, transaction_date');
 
-    if (!spareError && spareData) {
-      for (const row of spareData) {
-        const amt = Number(row.amount ?? 0);
-        totalSpareSpent += amt;
-        if (row.pay_period_id) {
-          spareSpentByPeriod.set(
-            row.pay_period_id,
-            (spareSpentByPeriod.get(row.pay_period_id) ?? 0) + amt
-          );
-        }
+  if (opts?.dateFrom) spareQuery = spareQuery.gte('transaction_date', opts.dateFrom.substring(0, 10));
+  if (opts?.dateTo) spareQuery = spareQuery.lte('transaction_date', opts.dateTo.substring(0, 10));
+
+  const { data: spareData, error: spareError } = await spareQuery;
+
+  if (!spareError && spareData) {
+    for (const row of spareData) {
+      const amt = Number(row.amount ?? 0);
+      totalSpareSpent += amt;
+      if (row.pay_period_id) {
+        spareSpentByPeriod.set(
+          row.pay_period_id,
+          (spareSpentByPeriod.get(row.pay_period_id) ?? 0) + amt
+        );
       }
     }
   }
@@ -613,15 +610,16 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     }
 
     // Add spare transactions spent for this period to its expenses
-    const periodSpareSpent = spareSpentByPeriod.get(period.id) ?? 0;
+    // DEPRECATED: We no longer add spare spent to monthly expenses. It's handled separately.
+    // const periodSpareSpent = spareSpentByPeriod.get(period.id) ?? 0;
 
     if (hasTypeData) {
       totalAssets += periodAssets;
-      monthlyExpenses += periodExpenses + periodSpareSpent;
+      monthlyExpenses += periodExpenses;
     } else {
       // Fallback: use legacy columns
       totalAssets += Number(period.total_savings ?? 0);
-      monthlyExpenses += Number(period.total_expenses ?? 0) + periodSpareSpent;
+      monthlyExpenses += Number(period.total_expenses ?? 0);
     }
   }
 
@@ -641,20 +639,21 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     }
   }
 
-  // Fetch ALL borrowing expenses (settled + unsettled) for spare calculation
-  // This ensures the dashboard spare matches the history page
-  const { data: allBorrowingData } = await supabase
-    .from('borrowings')
-    .select('id, type')
-    .eq('type', 'borrowed');
-
-  if (allBorrowingData && allBorrowingData.length > 0) {
-    const allBorrowedIds = allBorrowingData.map(b => b.id);
-
-    const { data: expData } = await supabase
+  // Fetch borrowing expenses filtered by date range for spare calculation
+  // This ensures the dashboard spare matches the selected date filter
+  {
+    let beQuery = supabase
       .from('borrowing_expenses')
-      .select('amount')
-      .in('borrowing_id', allBorrowedIds);
+      .select('amount, expense_date');
+
+    if (opts?.dateFrom) {
+      beQuery = beQuery.gte('expense_date', opts.dateFrom.substring(0, 10));
+    }
+    if (opts?.dateTo) {
+      beQuery = beQuery.lte('expense_date', opts.dateTo.substring(0, 10));
+    }
+
+    const { data: expData } = await beQuery;
 
     if (expData) {
       for (const e of expData) {
@@ -847,6 +846,8 @@ export async function signOut() {
 
 export async function getBorrowings(opts?: {
   settled?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
 }): Promise<Borrowing[]> {
   let query = supabase
     .from('borrowings')
@@ -855,6 +856,12 @@ export async function getBorrowings(opts?: {
 
   if (opts?.settled !== undefined) {
     query = query.eq('is_settled', opts.settled);
+  }
+  if (opts?.dateFrom) {
+    query = query.gte('transaction_date', opts.dateFrom);
+  }
+  if (opts?.dateTo) {
+    query = query.lte('transaction_date', opts.dateTo);
   }
 
   const { data, error } = await query;
@@ -921,11 +928,20 @@ export async function deleteBorrowing(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function getBorrowingSummary(): Promise<BorrowingSummary> {
-  const { data, error } = await supabase
+export async function getBorrowingSummary(opts?: {
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<BorrowingSummary> {
+  let query = supabase
     .from('borrowings')
     .select('type, amount')
     .eq('is_settled', false);
+
+  if (opts?.dateFrom) {
+    // Active debts shouldn't be filtered by date. They are active regardless of when created.
+  }
+
+  const { data, error } = await query;
 
   if (error) throw error;
 
@@ -1178,7 +1194,7 @@ export async function deleteBorrowingExpense(id: string): Promise<void> {
 
 /** Get all borrowings with their expenses */
 export async function getBorrowingsWithExpenses(
-  opts?: { settled?: boolean }
+  opts?: { settled?: boolean; dateFrom?: string; dateTo?: string; }
 ): Promise<Array<Borrowing & { expenses: BorrowingExpense[]; totalSpent: number; remainingBalance: number }>> {
   const supabase = createClient();
 
@@ -1189,6 +1205,16 @@ export async function getBorrowingsWithExpenses(
 
   if (opts?.settled !== undefined) {
     query = query.eq('is_settled', opts.settled);
+  }
+  if (opts?.dateFrom) {
+    if (opts.settled) {
+      query = query.gte('settled_at', opts.dateFrom);
+    }
+  }
+  if (opts?.dateTo) {
+    if (opts.settled) {
+      query = query.lte('settled_at', opts.dateTo);
+    }
   }
 
   const { data: borrowings, error } = await query;
@@ -1234,10 +1260,18 @@ export async function getBorrowingsHistory(
     .order('transaction_date', { ascending: false });
 
   if (opts?.dateFrom) {
-    query = query.gte('transaction_date', opts.dateFrom);
+    if (opts.settled) {
+      query = query.gte('settled_at', opts.dateFrom);
+    } else {
+      query = query.gte('transaction_date', opts.dateFrom);
+    }
   }
   if (opts?.dateTo) {
-    query = query.lte('transaction_date', opts.dateTo);
+    if (opts.settled) {
+      query = query.lte('settled_at', opts.dateTo);
+    } else {
+      query = query.lte('transaction_date', opts.dateTo);
+    }
   }
   if (opts?.settled !== undefined) {
     query = query.eq('is_settled', opts.settled);

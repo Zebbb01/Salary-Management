@@ -31,7 +31,9 @@ import {
   Info,
   Gift,
   CreditCard,
+  CalendarRange,
 } from 'lucide-react';
+import { MonthYearPicker, type MonthYearSelection } from '@/components/ui/month-year-picker';
 import { toast } from 'sonner';
 import {
   Tooltip as UITooltip,
@@ -132,9 +134,10 @@ interface SummaryCardProps {
   icon: React.ElementType;
   colorTheme: 'rose' | 'emerald' | 'teal' | 'amber' | 'sky';
   subtitle?: string;
+  tooltip?: React.ReactNode;
 }
 
-function SummaryCard({ label, value, icon: Icon, colorTheme, subtitle }: SummaryCardProps) {
+function SummaryCard({ label, value, icon: Icon, colorTheme, subtitle, tooltip }: SummaryCardProps) {
   const themeClasses = {
     rose: {
       accent: 'bg-rose-500',
@@ -208,6 +211,18 @@ function SummaryCard({ label, value, icon: Icon, colorTheme, subtitle }: Summary
             <span className="text-[9px] sm:text-xs font-semibold tracking-wider text-muted-foreground uppercase">
               {label}
             </span>
+            {tooltip && (
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex shrink-0">
+                    <Info className="h-3.5 w-3.5 text-muted-foreground/35 hover:text-muted-foreground/75 cursor-help transition-colors" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[220px] text-[10px] leading-relaxed">
+                    {tooltip}
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            )}
           </div>
 
           <div>
@@ -281,10 +296,14 @@ function EmptyBorrowings() {
 // ============================================
 
 type TabFilter = 'all' | 'borrowed' | 'lent';
-type PendingAction =
-  | { type: 'settle'; borrowing: Borrowing; isGifted: boolean }
-  | { type: 'delete'; borrowing: Borrowing }
-  | null;
+type PendingAction = {
+  type: 'settle' | 'unsettle' | 'delete' | 'deleteExpense';
+  id?: string;
+  borrowing: Borrowing;
+  isGifted?: boolean;
+} | null;
+
+type DateFilterPreset = 'all-time' | 'this-month' | 'last-month' | 'this-year' | 'custom';
 
 export default function BorrowingPage() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -300,6 +319,10 @@ export default function BorrowingPage() {
   const [showSettled, setShowSettled] = useState(false);
   const [tabFilter, setTabFilter] = useState<TabFilter>('all');
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+
+  // Date Filter State
+  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('this-month');
+  const [customMonth, setCustomMonth] = useState<MonthYearSelection | null>(null);
 
   // Form state
   const [formType, setFormType] = useState<BorrowingType>('borrowed');
@@ -325,10 +348,55 @@ export default function BorrowingPage() {
       const user = await getCurrentUser();
       if (user) setUserId(user.id);
 
+      // Compute dateRange
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+
+      function localDate(y: number, m: number, d: number): string {
+        return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      }
+      function localDateEnd(y: number, m: number, d: number): string {
+        return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}T23:59:59`;
+      }
+      function lastDay(y: number, m: number): number {
+        return new Date(y, m + 1, 0).getDate();
+      }
+
+      let dateFrom: string | undefined;
+      let dateTo: string | undefined;
+      
+      switch (dateFilter) {
+        case 'this-month':
+          dateFrom = localDate(year, month, 1);
+          dateTo = localDateEnd(year, month, lastDay(year, month));
+          break;
+        case 'last-month': {
+          const lm = new Date(year, month - 1, 1);
+          const lmY = lm.getFullYear();
+          const lmM = lm.getMonth();
+          dateFrom = localDate(lmY, lmM, 1);
+          dateTo = localDateEnd(lmY, lmM, lastDay(lmY, lmM));
+          break;
+        }
+        case 'this-year':
+          dateFrom = localDate(year, 0, 1);
+          dateTo = localDateEnd(year, 11, 31);
+          break;
+        case 'custom':
+          if (customMonth) {
+            const cY = customMonth.year;
+            const cM = customMonth.month;
+            dateFrom = localDate(cY, cM, 1);
+            dateTo = localDateEnd(cY, cM, lastDay(cY, cM));
+          }
+          break;
+      }
+
       const [active, settled, sum] = await Promise.all([
-        getBorrowingsWithExpenses({ settled: false }),
-        getBorrowings({ settled: true }),
-        getBorrowingSummary(),
+        getBorrowingsWithExpenses({ settled: false, dateFrom, dateTo }),
+        getBorrowings({ settled: true, dateFrom, dateTo }),
+        getBorrowingSummary({ dateFrom, dateTo }),
       ]);
 
       setActiveBorrowings(active);
@@ -340,7 +408,7 @@ export default function BorrowingPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [dateFilter, customMonth]);
 
   useEffect(() => {
     fetchData();
@@ -582,6 +650,46 @@ export default function BorrowingPage() {
         </div>
       </motion.div>
 
+      {/* Date Filter Toolbar */}
+      <motion.div variants={staggerItem} className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 sm:static sm:mx-0 sm:px-0 sm:py-0 sm:bg-transparent sm:backdrop-blur-none sm:border-none flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+          <CalendarRange className="h-4 w-4 text-primary" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          {[
+            { value: 'all-time' as const, label: 'All Time' },
+            { value: 'this-month' as const, label: 'This Month' },
+            { value: 'last-month' as const, label: 'Last Month' },
+            { value: 'this-year' as const, label: 'This Year' },
+          ].map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => { setDateFilter(opt.value); setCustomMonth(null); }}
+              className={cn(
+                'whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer',
+                dateFilter === opt.value && !customMonth
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+          <MonthYearPicker
+            value={customMonth}
+            onChange={(val) => {
+              setCustomMonth(val);
+              if (val) {
+                setDateFilter('custom');
+              } else {
+                setDateFilter('all-time');
+              }
+            }}
+            placeholder="Custom"
+          />
+        </div>
+      </motion.div>
+
       {/* Summary Cards */}
       <motion.div
         variants={staggerContainer}
@@ -626,6 +734,7 @@ export default function BorrowingPage() {
           subtitle="Written off or received as gifts"
         />
       </motion.div>
+
 
       {/* Side-by-side form and active list on desktop */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
