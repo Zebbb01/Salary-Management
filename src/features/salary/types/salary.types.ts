@@ -291,3 +291,90 @@ export interface BorrowingWithExpenses extends Borrowing {
   totalSpent: number;
   remainingBalance: number;
 }
+
+// Allocation expense (spending from a specific allocation fund)
+export interface AllocationExpense {
+  id: string;
+  user_id: string;
+  allocation_id: string;
+  description: string;
+  amount: number;
+  expense_date: string;
+  is_shared: boolean;
+  paid_by: string | null;
+  shared_total: number | null;
+  shared_parties: number | null;
+  borrowing_id: string | null;
+  held_fund_id: string | null;
+  is_borrowing_settled?: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Held fund (money you're holding for someone else)
+export interface HeldFund {
+  id: string;
+  user_id: string;
+  person_name: string;
+  original_amount: number;
+  current_amount: number;
+  description: string | null;
+  is_returned: boolean;
+  returned_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Allocation with fund tracking data
+export interface AllocationFundSummary {
+  allocation_id: string;
+  category: string;
+  budgeted: number;
+  totalSpent: number;
+  remaining: number;
+  expenses: AllocationExpense[];
+}
+
+// Allocation expense (spending from a specific allocation fund)
+export interface AllocationExpense {
+  id: string;
+  user_id: string;
+  allocation_id: string;
+  description: string;
+  amount: number;
+  expense_date: string;
+  is_shared: boolean;
+  paid_by: string | null;
+  shared_total: number | null;
+  shared_parties: number | null;
+  borrowing_id: string | null;
+  held_fund_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Held fund (money you're holding for someone else)
+export interface HeldFund {
+  id: string;
+  user_id: string;
+  person_name: string;
+  original_amount: number;
+  current_amount: number;
+  description: string | null;
+  is_returned: boolean;
+  returned_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Allocation with fund tracking data
+export interface AllocationFundSummary {
+  allocation_id: string;
+  category: string;
+  budgeted: number;
+  totalSpent: number;
+  remaining: number;
+  expenses: AllocationExpense[];
+}

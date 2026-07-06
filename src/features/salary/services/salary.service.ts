@@ -17,6 +17,9 @@ import type {
   ConsumableBudgetSummary,
   ConsumableMonthlyRecord,
   BorrowingExpense,
+  AllocationExpense,
+  HeldFund,
+  AllocationFundSummary,
 } from '../types/salary.types';
 import { calculatePayPeriod } from '../utils/calculations';
 
@@ -534,6 +537,30 @@ export async function initMonthlyBills(
 // ============================================
 
 export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: string }): Promise<FinancialSummary> {
+  const supabase = createClient();
+  
+  // Fetch live budget allocations and types to get up-to-date classifications
+  const { data: dbAllocations } = await supabase
+    .from('budget_allocations')
+    .select('id, allocation_type_id');
+  
+  const { data: dbTypes } = await supabase
+    .from('allocation_types')
+    .select('id, classification');
+  
+  const allocationClassificationMap = new Map<string, string>();
+  if (dbAllocations && dbTypes) {
+    const typeMap = new Map(dbTypes.map((t) => [t.id, t.classification]));
+    for (const alloc of dbAllocations) {
+      if (alloc.allocation_type_id) {
+        const classification = typeMap.get(alloc.allocation_type_id);
+        if (classification) {
+          allocationClassificationMap.set(alloc.id, classification);
+        }
+      }
+    }
+  }
+
   let query = supabase
     .from('pay_periods')
     .select('id, total_income, total_tax, total_deductions, total_expenses, total_savings, allocation_amounts, first_wage, second_wage, part_time, additional_income, spare_amount')
@@ -559,7 +586,7 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     const items = (p.additional_income ?? []) as { amount: number }[];
     return s + items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
   }, 0);
-  const totalExpensesSum = periods.reduce((s, p) => s + Number(p.total_expenses ?? 0), 0);
+  
   const totalSpare = periods.reduce((s, p) => s + Number(p.spare_amount ?? 0), 0);
 
   // Fetch spare transactions for the date range to compute total spent
@@ -593,25 +620,24 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   let monthlyExpenses = 0;
 
   for (const period of periods) {
-    const allocAmounts = (period.allocation_amounts ?? []) as { actual?: number; allocation_type?: string }[];
+    const allocAmounts = (period.allocation_amounts ?? []) as { actual?: number; allocation_type?: string; allocation_id?: string }[];
     let periodAssets = 0;
     let periodExpenses = 0;
     let hasTypeData = false;
 
     for (const a of allocAmounts) {
       const actual = Number(a.actual ?? 0);
-      if (a.allocation_type === 'asset') {
+      const liveType = a.allocation_id ? allocationClassificationMap.get(a.allocation_id) : null;
+      const type = liveType || a.allocation_type;
+
+      if (type === 'asset') {
         periodAssets += actual;
         hasTypeData = true;
-      } else if (a.allocation_type === 'expense') {
+      } else if (type === 'expense') {
         periodExpenses += actual;
         hasTypeData = true;
       }
     }
-
-    // Add spare transactions spent for this period to its expenses
-    // DEPRECATED: We no longer add spare spent to monthly expenses. It's handled separately.
-    // const periodSpareSpent = spareSpentByPeriod.get(period.id) ?? 0;
 
     if (hasTypeData) {
       totalAssets += periodAssets;
@@ -713,7 +739,7 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     partTimeSalary,
     additionalIncomeTotal,
     totalTax,
-    totalExpensesSum,
+    totalExpensesSum: monthlyExpenses,
     totalSpare,
     totalSpareSpent,
     totalBorrowed,
@@ -1294,5 +1320,350 @@ export async function getConsumableExpensesByUser(
 
   if (error) throw error;
   return data ?? [];
+}
+
+// ============================================
+// ALLOCATION EXPENSES (Fund Tracker)
+// ============================================
+
+/** Get all expenses for a specific allocation */
+export async function getAllocationExpenses(
+  allocationId: string
+): Promise<AllocationExpense[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('allocation_expenses')
+    .select('*')
+    .eq('allocation_id', allocationId)
+    .order('expense_date', { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Get fund summaries for multiple allocations */
+export async function getAllocationFundSummaries(
+  userId: string,
+  allocations: { id: string; category: string; amount: number }[],
+  opts?: { dateFrom?: string; dateTo?: string }
+): Promise<AllocationFundSummary[]> {
+  const supabase = createClient();
+  const allocationIds = allocations.map((a) => a.id);
+  if (allocationIds.length === 0) return [];
+
+  // 1. Fetch allocation expenses within the date range
+  let expenseQuery = supabase
+    .from('allocation_expenses')
+    .select('*')
+    .in('allocation_id', allocationIds)
+    .order('expense_date', { ascending: false });
+
+  if (opts?.dateFrom) {
+    expenseQuery = expenseQuery.gte('expense_date', opts.dateFrom.substring(0, 10));
+  }
+  if (opts?.dateTo) {
+    expenseQuery = expenseQuery.lte('expense_date', opts.dateTo.substring(0, 10));
+  }
+
+  const { data: expenses, error: eError } = await expenseQuery;
+  if (eError) throw eError;
+
+  // 1b. Fetch borrowings to check settlement status for unpaid shared expenses
+  const borrowingIds = (expenses ?? [])
+    .map((e) => e.borrowing_id)
+    .filter((id): id is string => !!id);
+
+  const borrowingSettledMap = new Map<string, boolean>();
+  if (borrowingIds.length > 0) {
+    const { data: borrowings, error: bError } = await supabase
+      .from('borrowings')
+      .select('id, is_settled')
+      .in('id', borrowingIds);
+    
+    if (!bError && borrowings) {
+      for (const b of borrowings) {
+        borrowingSettledMap.set(b.id, b.is_settled);
+      }
+    }
+  }
+
+  // Group expenses by allocation_id and map settlement status
+  const expenseMap = new Map<string, AllocationExpense[]>();
+  for (const exp of expenses ?? []) {
+    const isSettled = exp.borrowing_id ? (borrowingSettledMap.get(exp.borrowing_id) ?? false) : true;
+    const list = expenseMap.get(exp.allocation_id) ?? [];
+    list.push({
+      ...exp,
+      is_borrowing_settled: isSettled,
+    });
+    expenseMap.set(exp.allocation_id, list);
+  }
+
+  // 2. Query pay periods in range to sum actual allocated amounts
+  let periodQuery = supabase
+    .from('pay_periods')
+    .select('allocation_amounts')
+    .eq('user_id', userId);
+
+  if (opts?.dateFrom) periodQuery = periodQuery.gte('created_at', opts.dateFrom);
+  if (opts?.dateTo) periodQuery = periodQuery.lte('created_at', opts.dateTo);
+
+  const { data: periods, error: pError } = await periodQuery;
+  
+  const allocatedMap = new Map<string, number>();
+  const hasPeriodData = !pError && periods && periods.length > 0;
+
+  if (hasPeriodData) {
+    for (const p of periods) {
+      const allocAmounts = (p.allocation_amounts ?? []) as any[];
+      for (const item of allocAmounts) {
+        const allocId = item.allocation_id;
+        if (allocId) {
+          const currentSum = allocatedMap.get(allocId) ?? 0;
+          allocatedMap.set(allocId, currentSum + Number(item.actual ?? 0));
+        }
+      }
+    }
+  }
+
+  // Build summaries
+  return allocations.map((alloc) => {
+    const allocExpenses = expenseMap.get(alloc.id) ?? [];
+    
+    // Only count expenses that have actually been spent from the user's cash/bank.
+    // That means: either no borrowing is linked, or the linked borrowing is already marked as settled.
+    const totalSpent = allocExpenses.reduce((sum, e) => {
+      const isSettled = e.borrowing_id ? (borrowingSettledMap.get(e.borrowing_id) ?? false) : true;
+      return sum + (isSettled ? Number(e.amount ?? 0) : 0);
+    }, 0);
+
+    const budgeted = hasPeriodData ? (allocatedMap.get(alloc.id) ?? 0) : alloc.amount;
+
+    return {
+      allocation_id: alloc.id,
+      category: alloc.category,
+      budgeted,
+      totalSpent,
+      remaining: budgeted - totalSpent,
+      expenses: allocExpenses,
+    };
+  });
+}
+
+/**
+ * Create an allocation expense.
+ * If is_shared && paid_by is set (someone else paid), auto-creates a borrowing record.
+ * If held_fund_id is set, auto-deducts from the held fund.
+ */
+export async function createAllocationExpense(
+  userId: string,
+  input: {
+    allocation_id: string;
+    description: string;
+    amount: number;
+    expense_date?: string;
+    is_shared?: boolean;
+    paid_by?: string;
+    shared_total?: number;
+    shared_parties?: number;
+    held_fund_id?: string;
+    held_fund_deduction?: number;
+    notes?: string;
+  }
+): Promise<AllocationExpense> {
+  const supabase = createClient();
+
+  let borrowingId: string | null = null;
+
+  // If someone else paid for you, create a borrowing record
+  if (input.is_shared && input.paid_by && input.paid_by.trim()) {
+    const { data: borrowing, error: bError } = await supabase
+      .from('borrowings')
+      .insert({
+        user_id: userId,
+        person_name: input.paid_by.trim(),
+        type: 'borrowed',
+        amount: input.amount,
+        description: `Shared expense: ${input.description}`,
+        transaction_date: input.expense_date ?? new Date().toISOString().split('T')[0],
+      })
+      .select()
+      .single();
+
+    if (bError) throw bError;
+    borrowingId = borrowing.id;
+  }
+
+  // If deducting from a held fund, reduce the current_amount
+  const heldFundId: string | null = input.held_fund_id ?? null;
+  if (heldFundId && input.held_fund_deduction && input.held_fund_deduction > 0) {
+    // Fetch current held fund
+    const { data: fund, error: fError } = await supabase
+      .from('held_funds')
+      .select('current_amount')
+      .eq('id', heldFundId)
+      .single();
+
+    if (fError) throw fError;
+
+    const newAmount = Math.max(0, Number(fund.current_amount) - input.held_fund_deduction);
+    const { error: uError } = await supabase
+      .from('held_funds')
+      .update({ current_amount: newAmount })
+      .eq('id', heldFundId);
+
+    if (uError) throw uError;
+  }
+
+  // Create the allocation expense
+  const { data, error: insertError } = await supabase
+    .from('allocation_expenses')
+    .insert({
+      user_id: userId,
+      allocation_id: input.allocation_id,
+      description: input.description,
+      amount: input.amount,
+      expense_date: input.expense_date ?? new Date().toISOString().split('T')[0],
+      is_shared: input.is_shared ?? false,
+      paid_by: input.paid_by ?? null,
+      shared_total: input.shared_total ?? null,
+      shared_parties: input.shared_parties ?? null,
+      borrowing_id: borrowingId,
+      held_fund_id: heldFundId,
+      notes: input.notes ?? null,
+    })
+    .select()
+    .single();
+
+  if (insertError) throw insertError;
+  return data;
+}
+
+/** Delete an allocation expense and reverse held fund deduction if applicable */
+export async function deleteAllocationExpense(id: string): Promise<void> {
+  const supabase = createClient();
+
+  // Fetch the expense first to check for held fund link
+  const { data: expense, error: fetchError } = await supabase
+    .from('allocation_expenses')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  // If linked to a held fund, reverse the deduction
+  if (expense.held_fund_id) {
+    const { data: fund, error: fError } = await supabase
+      .from('held_funds')
+      .select('current_amount, original_amount')
+      .eq('id', expense.held_fund_id)
+      .single();
+
+    if (!fError && fund) {
+      const restored = Math.min(
+        Number(fund.original_amount),
+        Number(fund.current_amount) + Number(expense.amount)
+      );
+      await supabase
+        .from('held_funds')
+        .update({ current_amount: restored })
+        .eq('id', expense.held_fund_id);
+    }
+  }
+
+  // If linked to a borrowing, delete the borrowing too
+  if (expense.borrowing_id) {
+    await supabase
+      .from('borrowings')
+      .delete()
+      .eq('id', expense.borrowing_id);
+  }
+
+  // Delete the expense
+  const { error } = await supabase
+    .from('allocation_expenses')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+// ============================================
+// HELD FUNDS
+// ============================================
+
+/** Get all held funds for the current user */
+export async function getHeldFunds(
+  opts?: { activeOnly?: boolean }
+): Promise<HeldFund[]> {
+  const supabase = createClient();
+  let query = supabase
+    .from('held_funds')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (opts?.activeOnly) {
+    query = query.eq('is_returned', false);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Create a new held fund */
+export async function createHeldFund(
+  userId: string,
+  input: {
+    person_name: string;
+    original_amount: number;
+    description?: string;
+  }
+): Promise<HeldFund> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('held_funds')
+    .insert({
+      user_id: userId,
+      person_name: input.person_name,
+      original_amount: input.original_amount,
+      current_amount: input.original_amount,
+      description: input.description ?? null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/** Mark a held fund as returned */
+export async function returnHeldFund(id: string): Promise<HeldFund> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('held_funds')
+    .update({
+      is_returned: true,
+      returned_at: new Date().toISOString(),
+      current_amount: 0,
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/** Delete a held fund */
+export async function deleteHeldFund(id: string): Promise<void> {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from('held_funds')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
 }
 

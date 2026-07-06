@@ -575,7 +575,7 @@ function SpareAmountChart({ periods, isMobile }: { periods: PayPeriod[]; isMobil
         </CardHeader>
         <CardContent>
           <div className="h-64 min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 256 }}>
               <AreaChart
                 data={chartData}
                 margin={{ top: 4, right: 20, left: 10, bottom: 0 }}
@@ -886,7 +886,7 @@ function IncomeExpensesChart({ periods, isMobile }: { periods: PayPeriod[]; isMo
         </CardHeader>
         <CardContent>
           <div className="h-64 min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 256 }}>
               <BarChart
                 data={chartData}
                 margin={{ top: 4, right: 20, left: 10, bottom: 0 }}
@@ -1773,7 +1773,7 @@ export default function HistoryPage() {
                       <p className="text-sm text-muted-foreground">No historical data available</p>
                     </div>
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 288 }}>
                       <AreaChart data={overallChartData} margin={{ top: 8, right: 10, left: 15, bottom: 0 }}>
                         <defs>
                           <linearGradient id="overallIncome" x1="0" y1="0" x2="0" y2="1">
@@ -2661,7 +2661,7 @@ export default function HistoryPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="h-72 min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 288 }}>
                           <BarChart
                             data={[...consumableRecords].reverse().map(r => ({
                               month: new Date(r.month + '-01').toLocaleDateString('en-PH', { month: 'short', year: '2-digit' }),
@@ -2893,7 +2893,7 @@ export default function HistoryPage() {
                     </CardHeader>
                     <CardContent>
                       <div className="h-72 min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 288 }}>
                           <BarChart
                             data={(() => {
                               const monthMap = new Map<string, { borrowed: number; lent: number; spent: number }>();

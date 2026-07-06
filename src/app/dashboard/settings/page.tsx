@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import {
@@ -232,6 +232,32 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Track previous total salary to scale percentage-based allocations in real-time
+  const prevTotalSalaryRef = useRef(totalSalary);
+
+  useEffect(() => {
+    if (allocations.length === 0 || totalSalary <= 0) {
+      prevTotalSalaryRef.current = totalSalary;
+      return;
+    }
+
+    const prevTotalSalary = prevTotalSalaryRef.current;
+    if (prevTotalSalary !== totalSalary && prevTotalSalary > 0) {
+      const ratio = totalSalary / prevTotalSalary;
+      setAllocationAmounts((prev) => {
+        const next = { ...prev };
+        for (const a of allocations) {
+          const isFixed = allocationFixedStates[a.id] ?? false;
+          if (!isFixed) {
+            next[a.id] = Math.round((prev[a.id] ?? 0) * ratio * 100) / 100;
+          }
+        }
+        return next;
+      });
+    }
+    prevTotalSalaryRef.current = totalSalary;
+  }, [totalSalary, allocations, allocationFixedStates]);
 
   // ---------------------------------------------------------------------------
   // Save salary config (full-time + part-time)
@@ -874,6 +900,16 @@ export default function SettingsPage() {
                           className="pl-10 text-right tabular-nums text-xs h-8"
                         />
                       </div>
+                      {!(allocationFixedStates[alloc.id] ?? false) && totalSalary > 0 && (
+                        <p className="text-[9px] text-right text-muted-foreground mt-0.5 font-medium">
+                          {(((allocationAmounts[alloc.id] ?? 0) / totalSalary) * 100).toFixed(1)}% of salary
+                        </p>
+                      )}
+                      {(allocationFixedStates[alloc.id] ?? false) && (
+                        <p className="text-[9px] text-right text-muted-foreground/50 mt-0.5 font-medium italic">
+                          Fixed amount
+                        </p>
+                      )}
                     </div>
                   </div>
 
