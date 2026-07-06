@@ -43,6 +43,7 @@ import {
   ShieldAlert,
   Activity,
   Loader2,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   Tooltip as UITooltip,
@@ -87,6 +88,8 @@ import {
   getAllocationFundSummaries,
   createAllocationExpense,
   deleteAllocationExpense,
+  createBorrowing,
+  updatePayPeriod,
 } from '@/features/salary/services/salary.service';
 import type {
   SalaryConfig,
@@ -118,6 +121,13 @@ import { Separator } from '@/components/ui/separator';
 import { MonthYearPicker, monthYearToDateRange, type MonthYearSelection } from '@/components/ui/month-year-picker';
 import { Input } from '@/components/ui/input';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ============================================
 // CONSTANTS
@@ -875,6 +885,10 @@ export default function DashboardPage() {
   const [hasPeriodData, setHasPeriodData] = useState(false);
   const [isSavingExpense, setIsSavingExpense] = useState(false);
   const [isSavingHeldFund, setIsSavingHeldFund] = useState(false);
+  const [returningHeldFundIds, setReturningHeldFundIds] = useState<string[]>([]);
+  const [deletingHeldFundIds, setDeletingHeldFundIds] = useState<string[]>([]);
+  const [convertingHeldFundIds, setConvertingHeldFundIds] = useState<string[]>([]);
+  const [processingExpenseIds, setProcessingExpenseIds] = useState<string[]>([]);
   const [isMobile, setIsMobile] = useState(false);
   const [pendingToggleBill, setPendingToggleBill] = useState<BillPayment | null>(null);
 
@@ -1189,13 +1203,14 @@ export default function DashboardPage() {
       });
 
       setHeldFunds((prev) => [fund, ...prev]);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
+
       setHeldFundName('');
       setHeldFundAmount('');
       setHeldFundDescription('');
       setShowAddHeldFundForm(false);
       toast.success('Held fund recorded successfully');
-      
-      fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to record held fund';
       toast.error(msg);
@@ -1205,26 +1220,234 @@ export default function DashboardPage() {
   }
 
   async function handleReturnHeldFund(id: string) {
+    setReturningHeldFundIds((prev) => [...prev, id]);
     try {
       const updated = await returnHeldFund(id);
       setHeldFunds((prev) => prev.map((f) => (f.id === id ? updated : f)));
       toast.success('Fund marked as returned');
-      fetchData(dateFilter, customMonth);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to return held fund';
       toast.error(msg);
+    } finally {
+      setReturningHeldFundIds((prev) => prev.filter((x) => x !== id));
+    }
+  }
+
+  async function handleConvertToOnlineDebt(fund: HeldFund) {
+    if (!userId) return;
+
+    if (fund.current_amount <= 0) {
+      toast.error('Cannot convert a fund with zero balance');
+      return;
+    }
+
+    setConvertingHeldFundIds((prev) => [...prev, fund.id]);
+    try {
+      const supabase = createClient();
+
+      // 1. Get all expenses linked to this held fund
+      const { data: linkedExpenses, error: expError } = await supabase
+        .from('allocation_expenses')
+        .select('*')
+        .eq('held_fund_id', fund.id);
+
+      if (expError) throw expError;
+
+      // 2. Find the original allocation ID from the linked expenses
+      let baseAllocation = null;
+      if (linkedExpenses && linkedExpenses.length > 0) {
+        const { data: alloc } = await supabase
+          .from('budget_allocations')
+          .select('*')
+          .eq('id', linkedExpenses[0].allocation_id)
+          .single();
+        baseAllocation = alloc;
+      }
+
+      // 3. Create the new "for brother" budget allocation
+      const baseCategory = baseAllocation?.category || 'Dental Care';
+      const newCategory = `${baseCategory} for ${fund.person_name.toLowerCase()}`;
+      
+      const { data: newAlloc, error: allocErr } = await supabase
+        .from('budget_allocations')
+        .insert({
+          salary_config_id: salaryConfig?.id || '',
+          category: newCategory,
+          percentage: 0,
+          description: `Converted from ${fund.person_name}'s held fund`,
+          icon_name: baseAllocation?.icon_name || 'piggy-bank',
+          color: baseAllocation?.color || 'hsl(210, 80%, 60%)',
+          display_order: 99,
+          allocation_type_id: baseAllocation?.allocation_type_id || null,
+          is_fixed: true,
+        })
+        .select()
+        .single();
+
+      if (allocErr) throw allocErr;
+
+      // 4. Update pay period to add original amount to income & budget allocation
+      if (latestPeriod) {
+        const currentAdditionalIncome = Array.isArray(latestPeriod.additional_income)
+          ? latestPeriod.additional_income
+          : [];
+        
+        const newAdditionalIncome = [
+          ...currentAdditionalIncome,
+          {
+            label: `Held Fund Conversion: ${fund.person_name}`,
+            amount: fund.original_amount,
+          }
+        ];
+
+        const currentAllocAmounts = Array.isArray(latestPeriod.allocation_amounts)
+          ? latestPeriod.allocation_amounts
+          : [];
+
+        const newAllocAmounts = [
+          ...currentAllocAmounts,
+          {
+            allocation_id: newAlloc.id,
+            actual: fund.original_amount,
+            target: fund.original_amount,
+          }
+        ];
+
+        const input: any = {
+          period_label: latestPeriod.period_label,
+          first_wage: latestPeriod.first_wage,
+          second_wage: latestPeriod.second_wage,
+          part_time: latestPeriod.part_time,
+          tax_rate: latestPeriod.tax_rate,
+          total_deductions: latestPeriod.total_deductions,
+          allocation_amounts: newAllocAmounts,
+          additional_income: newAdditionalIncome,
+          daily_consumable_rate: latestPeriod.daily_consumable_rate,
+          daily_consumable_days: latestPeriod.daily_consumable_days,
+          rent: latestPeriod.rent,
+          electricity: latestPeriod.electricity,
+          monthly_utils_items: latestPeriod.monthly_utils_items,
+          emergency_fund: latestPeriod.emergency_fund,
+          general_savings: latestPeriod.general_savings,
+        };
+
+        await updatePayPeriod(latestPeriod.id, input);
+      }
+
+      // 5. Update linked expenses and borrowings
+      for (const e of linkedExpenses ?? []) {
+        if (e.borrowing_id) {
+          // This is a shared expense where you owe Brother (e.g. your share of cleaning)
+          // 5a. Settle the borrowing
+          await supabase
+            .from('borrowings')
+            .update({ is_settled: true, settled_at: new Date().toISOString() })
+            .eq('id', e.borrowing_id);
+
+          // 5b. Remove the held_fund_id from the original expense (keeps it under your allocation, now settled)
+          await supabase
+            .from('allocation_expenses')
+            .update({ held_fund_id: null })
+            .eq('id', e.id);
+
+          // 5c. Create Brother's share of this expense under the new allocation
+          const brothersShare = Number(e.shared_total ?? 0) - Number(e.amount);
+          if (brothersShare > 0) {
+            await supabase
+              .from('allocation_expenses')
+              .insert({
+                user_id: userId,
+                allocation_id: newAlloc.id,
+                description: `Brother's Share: ${e.description}`,
+                amount: brothersShare,
+                expense_date: e.expense_date,
+                is_shared: false,
+                notes: `Auto-generated from held fund conversion`,
+              });
+          }
+        } else {
+          const isBrothersExpense = e.description.toLowerCase().includes('brother') || e.description.toLowerCase().includes(fund.person_name.toLowerCase());
+          
+          if (isBrothersExpense) {
+            // This is a direct expense of Brother
+            // Move it to the new allocation and remove held_fund_id
+            await supabase
+              .from('allocation_expenses')
+              .update({
+                allocation_id: newAlloc.id,
+                held_fund_id: null,
+              })
+              .eq('id', e.id);
+          } else {
+            // This is a personal expense of the user borrowed from the held fund (Toll, Gas, etc.)
+            // 1. Keep under original allocation, but remove held_fund_id
+            // 2. Create a borrowing record so they owe Brother
+            const { data: bRec, error: bRecErr } = await supabase
+              .from('borrowings')
+              .insert({
+                user_id: userId,
+                person_name: fund.person_name,
+                type: 'borrowed',
+                amount: e.amount,
+                description: `Borrowed from held fund: ${e.description}`,
+                transaction_date: e.expense_date,
+                is_settled: false
+              })
+              .select()
+              .single();
+
+            if (!bRecErr && bRec) {
+              await supabase
+                .from('allocation_expenses')
+                .update({
+                  borrowing_id: bRec.id,
+                  held_fund_id: null,
+                })
+                .eq('id', e.id);
+            }
+          }
+        }
+      }
+
+      // 6. Create a borrowing record representing the remaining online debt
+      await createBorrowing(userId, {
+        person_name: fund.person_name,
+        type: 'borrowed',
+        amount: fund.current_amount,
+        description: `Held fund converted to online debt: ${fund.description || ''}`.trim(),
+        transaction_date: new Date().toISOString().split('T')[0],
+      });
+
+      // 7. Mark the Held Fund as returned (closed)
+      const updatedFund = await returnHeldFund(fund.id);
+      setHeldFunds((prev) => prev.map((f) => (f.id === fund.id ? updatedFund : f)));
+
+      toast.success(`Converted! Created "${newCategory}" allocation of PHP ${formatPHP(fund.original_amount)}. Remaining PHP ${formatPHP(fund.current_amount)} is online debt.`);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to convert held fund';
+      toast.error(msg);
+    } finally {
+      setConvertingHeldFundIds((prev) => prev.filter((x) => x !== fund.id));
     }
   }
 
   async function handleDeleteHeldFund(id: string) {
+    setDeletingHeldFundIds((prev) => [...prev, id]);
     try {
       await deleteHeldFund(id);
       setHeldFunds((prev) => prev.filter((f) => f.id !== id));
       toast.success('Held fund deleted');
-      fetchData(dateFilter, customMonth);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete held fund';
       toast.error(msg);
+    } finally {
+      setDeletingHeldFundIds((prev) => prev.filter((x) => x !== id));
     }
   }
 
@@ -1269,6 +1492,9 @@ export default function DashboardPage() {
         notes: undefined,
       });
 
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
+
       toast.success('Expense recorded successfully');
       setExpenseDesc('');
       setExpenseAmount('');
@@ -1278,8 +1504,6 @@ export default function DashboardPage() {
       setDeductFromHeldFundId('');
       setDeductAmount('');
       setAddingExpenseForAllocId(null);
-      
-      fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to record expense';
       toast.error(msg);
@@ -1289,13 +1513,17 @@ export default function DashboardPage() {
   }
 
   async function handleDeleteExpense(expenseId: string) {
+    setProcessingExpenseIds((prev) => [...prev, expenseId]);
     try {
       await deleteAllocationExpense(expenseId);
       toast.success('Expense deleted successfully');
-      fetchData(dateFilter, customMonth);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete expense';
       toast.error(msg);
+    } finally {
+      setProcessingExpenseIds((prev) => prev.filter((x) => x !== expenseId));
     }
   }
 
@@ -1978,16 +2206,22 @@ export default function DashboardPage() {
       {userId && allocations.length > 0 && (
         <motion.div variants={staggerItem} className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Left Column: Held Funds */}
-          <Card className="lg:col-span-1 border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader className="pb-4">
+          <Card className="lg:col-span-1 border-border/40 bg-card/60 backdrop-blur-md flex flex-col">
+            <CardHeader className="pb-4 shrink-0">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Coins className="h-4.5 w-4.5 text-blue-500" />
-                  <CardTitle className="text-sm font-semibold">Held Funds</CardTitle>
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                    <Coins className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Held Funds</CardTitle>
+                    <CardDescription className="text-[10px] mt-0.5">Money held for other people</CardDescription>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
+                  disabled={isSavingHeldFund || returningHeldFundIds.length > 0 || deletingHeldFundIds.length > 0}
                   onClick={() => setShowAddHeldFundForm(!showAddHeldFundForm)}
                   className="h-8 text-xs text-blue-500 hover:text-blue-600 hover:bg-blue-500/10 cursor-pointer"
                 >
@@ -1995,47 +2229,47 @@ export default function DashboardPage() {
                   Add New
                 </Button>
               </div>
-              <CardDescription>Money you are holding for other people</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 flex-1 overflow-hidden flex flex-col pb-4">
               {/* Add Held Fund Form */}
               {showAddHeldFundForm && (
                 <motion.form
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   onSubmit={handleAddHeldFund}
-                  className="space-y-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3"
+                  className="space-y-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3.5 shrink-0"
                 >
+                  <h6 className="text-[11px] font-bold text-blue-400">Add Held Fund</h6>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-medium text-muted-foreground">Person Name *</label>
+                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Person Name *</label>
                     <Input
                       placeholder="e.g. Brother"
                       value={heldFundName}
                       onChange={(e) => setHeldFundName(e.target.value)}
-                      className="h-8 text-xs"
+                      className="h-8 text-xs bg-background/50"
                       required
                       autoComplete="off"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-medium text-muted-foreground">Amount (PHP) *</label>
+                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Amount (PHP) *</label>
                     <Input
                       type="number"
                       placeholder="e.g. 7500"
                       value={heldFundAmount}
                       onChange={(e) => setHeldFundAmount(e.target.value)}
-                      className="h-8 text-xs"
+                      className="h-8 text-xs bg-background/50"
                       required
                       autoComplete="off"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-medium text-muted-foreground">Description / Notes</label>
+                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Description / Notes</label>
                     <Input
                       placeholder="e.g. For dental share"
                       value={heldFundDescription}
                       onChange={(e) => setHeldFundDescription(e.target.value)}
-                      className="h-8 text-xs"
+                      className="h-8 text-xs bg-background/50"
                       autoComplete="off"
                     />
                   </div>
@@ -2071,50 +2305,133 @@ export default function DashboardPage() {
               )}
 
               {/* Held Funds List */}
-              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin">
+              <div className="space-y-3 overflow-y-auto pr-1 scrollbar-thin flex-1 min-h-[150px] max-h-[350px]">
                 {heldFunds.map((fund) => {
                   const percentage = fund.original_amount > 0 ? (fund.current_amount / fund.original_amount) * 100 : 0;
+                  const isReturning = returningHeldFundIds.includes(fund.id);
+                  const isDeleting = deletingHeldFundIds.includes(fund.id);
+                  const isConverting = convertingHeldFundIds.includes(fund.id);
+                  const isProcessing = isReturning || isDeleting || isConverting;
+                  const isActionDisabled = isSavingHeldFund || returningHeldFundIds.length > 0 || deletingHeldFundIds.length > 0 || convertingHeldFundIds.length > 0;
                   return (
                     <div
                       key={fund.id}
                       className={cn(
-                        "group relative rounded-lg border border-border/50 p-3 transition-colors duration-200",
-                        fund.is_returned ? "bg-muted/30 opacity-60" : "bg-muted/40 hover:bg-muted/60"
+                        "group relative rounded-xl border border-border/50 p-3.5 transition-all duration-200 bg-muted/40 hover:bg-muted/60",
+                        fund.is_returned && "bg-muted/10 opacity-60 border-border/20",
+                        isProcessing && "opacity-50 pointer-events-none"
                       )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-semibold text-foreground">{fund.person_name}</p>
+                      {/* Top row: details and amount */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-xs font-bold text-foreground truncate">{fund.person_name}</p>
+                            {!fund.is_returned ? (
+                              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" title="Active" />
+                            ) : (
+                              <Badge variant="secondary" className="text-[8px] px-1 py-0 h-3.5 bg-muted text-muted-foreground leading-none">
+                                Returned
+                              </Badge>
+                            )}
+                          </div>
                           {fund.description && (
-                            <p className="text-[10px] text-muted-foreground mt-0.5">{fund.description}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{fund.description}</p>
                           )}
-                          <p className="text-[10px] text-muted-foreground mt-1">
-                            Original: PHP {formatPHP(fund.original_amount)}
+                          <p className="text-[9px] text-muted-foreground mt-1 uppercase font-semibold tracking-wider">
+                            Original: <span className="text-foreground">PHP {formatPHP(fund.original_amount)}</span>
                           </p>
                         </div>
-                        <div className="text-right pr-14">
-                          <p className="text-xs font-bold tabular-nums text-blue-500">
+                        
+                        {/* Right align amount and actions */}
+                        <div className="flex flex-col items-end gap-1.5 shrink-0 text-right">
+                          <p className="text-xs font-extrabold tabular-nums text-blue-400">
                             PHP {formatPHP(fund.current_amount)}
                           </p>
-                          {fund.is_returned ? (
-                            <Badge variant="secondary" className="mt-1 text-[9px] px-1 py-0 h-4 bg-muted text-muted-foreground">
-                              Returned
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="mt-1 text-[9px] px-1 py-0 h-4 bg-blue-500/10 text-blue-400">
-                              Active
-                            </Badge>
-                          )}
+                          
+                          {/* Dedicated actions space (no absolute overlay) */}
+                          <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
+                            {!fund.is_returned && (
+                              <>
+                                <ConfirmDialog
+                                  trigger={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={isActionDisabled}
+                                      className="h-6 w-6 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 cursor-pointer"
+                                      title="Convert to Online Debt"
+                                    >
+                                      {isConverting ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <ArrowRightLeft className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  }
+                                  title="Convert to Online Debt"
+                                  description={`Are you sure you want to convert this held fund of PHP ${formatPHP(fund.current_amount)} to online debt? The physical cash on hand will become yours (added to your Available Spare), and an unpaid borrowing debt of PHP ${formatPHP(fund.current_amount)} will be created under ${fund.person_name}.`}
+                                  confirmLabel="Convert to Debt"
+                                  variant="info"
+                                  onConfirm={() => handleConvertToOnlineDebt(fund)}
+                                />
+                                <ConfirmDialog
+                                  trigger={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={isActionDisabled}
+                                      className="h-6 w-6 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+                                      title="Mark Returned"
+                                    >
+                                      {isReturning ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                      )}
+                                    </Button>
+                                  }
+                                  title="Mark as Returned"
+                                  description={`Are you sure you want to mark this fund as returned? The remaining balance of PHP ${formatPHP(fund.current_amount)} will be set to 0.`}
+                                  confirmLabel="Return Fund"
+                                  variant="warning"
+                                  onConfirm={() => handleReturnHeldFund(fund.id)}
+                                />
+                              </>
+                            )}
+                            <ConfirmDialog
+                              trigger={
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={isActionDisabled}
+                                  className="h-6 w-6 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer"
+                                  title="Delete"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                              }
+                              title="Delete Held Fund"
+                              description="Are you sure you want to delete this held fund? This action cannot be undone."
+                              confirmLabel="Delete"
+                              destructive
+                              onConfirm={() => handleDeleteHeldFund(fund.id)}
+                            />
+                          </div>
                         </div>
                       </div>
 
                       {/* Progress Bar */}
                       {!fund.is_returned && (
-                        <div className="mt-3.5 space-y-1">
-                          <div className="flex justify-between text-[9px] text-muted-foreground">
+                        <div className="mt-3 space-y-1">
+                          <div className="flex justify-between text-[9px] text-muted-foreground font-medium">
                             <span>{Math.round(percentage)}% remaining</span>
                           </div>
-                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-muted/60">
                             <div
                               className="h-full rounded-full bg-blue-500 transition-all duration-500"
                               style={{ width: `${percentage}%` }}
@@ -2122,52 +2439,12 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       )}
-
-                      {/* Actions */}
-                      <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                        {!fund.is_returned && (
-                          <ConfirmDialog
-                            trigger={
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10 cursor-pointer"
-                                title="Mark Returned"
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                              </Button>
-                            }
-                            title="Mark as Returned"
-                            description={`Are you sure you want to mark this fund as returned? The remaining balance of PHP ${formatPHP(fund.current_amount)} will be set to 0.`}
-                            confirmLabel="Return Fund"
-                            variant="warning"
-                            onConfirm={() => handleReturnHeldFund(fund.id)}
-                          />
-                        )}
-                        <ConfirmDialog
-                          trigger={
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 cursor-pointer"
-                              title="Delete"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          }
-                          title="Delete Held Fund"
-                          description="Are you sure you want to delete this held fund? This action cannot be undone."
-                          confirmLabel="Delete"
-                          destructive
-                          onConfirm={() => handleDeleteHeldFund(fund.id)}
-                        />
-                      </div>
                     </div>
                   );
                 })}
 
                 {heldFunds.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-lg">
+                  <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-xl">
                     <PiggyBank className="h-8 w-8 text-muted-foreground/30 mb-2" />
                     <span>No held funds recorded yet</span>
                   </div>
@@ -2178,12 +2455,16 @@ export default function DashboardPage() {
 
           {/* Right Column: Allocation Funds */}
           <Card className="lg:col-span-2 border-border/40 bg-card/60 backdrop-blur-md">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <PiggyBank className="h-4.5 w-4.5 text-blue-500" />
-                <CardTitle className="text-sm font-semibold">Allocation Funds Tracker</CardTitle>
+            <CardHeader className="pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                  <PiggyBank className="h-4 w-4" />
+                </div>
+                <div>
+                  <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Allocation Funds Tracker</CardTitle>
+                  <CardDescription className="text-[10px] mt-0.5">Track expenses and shared costs against allocations</CardDescription>
+                </div>
               </div>
-              <CardDescription>Track individual expenses and shared dental/medical/etc. costs against allocations</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2194,48 +2475,48 @@ export default function DashboardPage() {
                   })
                   .map((summary) => {
                     const isExpanded = expandedAllocationId === summary.allocation_id;
-                  const isAddingExpense = addingExpenseForAllocId === summary.allocation_id;
-                  const spentPct = summary.budgeted > 0 ? (summary.totalSpent / summary.budgeted) * 100 : 0;
-                  const isOver = summary.remaining < 0;
+                    const isAddingExpense = addingExpenseForAllocId === summary.allocation_id;
+                    const spentPct = summary.budgeted > 0 ? (summary.totalSpent / summary.budgeted) * 100 : 0;
+                    const isOver = summary.remaining < 0;
 
-                  return (
-                    <div
-                      key={summary.allocation_id}
-                      className={cn(
-                        "rounded-xl border border-border/60 p-4 transition-all duration-200",
-                        isExpanded ? "md:col-span-2 bg-muted/20" : "bg-muted/40 hover:bg-muted/60"
-                      )}
-                    >
-                      {/* Fund Card Header */}
-                      <div className="flex items-start justify-between gap-4 cursor-pointer" onClick={() => setExpandedAllocationId(isExpanded ? null : summary.allocation_id)}>
-                        <div className="min-w-0 flex-1 flex items-start gap-2.5">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 mt-0.5">
-                            {(() => {
-                              const CategoryIcon = getCategoryIcon(summary.category);
-                              return <CategoryIcon className="h-4 w-4" />;
-                            })()}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <h4 className="text-xs font-bold text-foreground truncate">{summary.category}</h4>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-[10px] text-muted-foreground">
-                                Budgeted: PHP {formatPHP(summary.budgeted)}
-                              </span>
-                              <span className="text-[10px] text-muted-foreground">•</span>
-                              <span className="text-[10px] text-muted-foreground">
-                                Spent: PHP {formatPHP(summary.totalSpent)}
+                    return (
+                      <div
+                        key={summary.allocation_id}
+                        className={cn(
+                          "rounded-xl border border-border/50 p-4 transition-all duration-200 flex flex-col gap-3",
+                          isExpanded ? "md:col-span-2 bg-muted/20 border-border" : "bg-muted/40 hover:bg-muted/60"
+                        )}
+                      >
+                        {/* Fund Card Header */}
+                        <div 
+                          className="flex flex-col gap-2.5 cursor-pointer" 
+                          onClick={() => setExpandedAllocationId(isExpanded ? null : summary.allocation_id)}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                                {(() => {
+                                  const CategoryIcon = getCategoryIcon(summary.category);
+                                  return <CategoryIcon className="h-4.5 w-4.5" />;
+                                })()}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-bold text-foreground truncate">{summary.category}</h4>
+                                <span className="text-[9px] text-muted-foreground uppercase tracking-wider font-semibold">Allocation</span>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className={cn(
+                                "text-xs font-extrabold tabular-nums",
+                                isOver ? "text-rose-400" : "text-emerald-400"
+                              )}>
+                                PHP {formatPHP(summary.remaining)} {isOver ? "over" : "left"}
                               </span>
                             </div>
                           </div>
-                        </div>
-                        <div className="text-right">
-                          <span className={cn(
-                            "text-xs font-bold tabular-nums",
-                            isOver ? "text-rose-500" : "text-emerald-500"
-                          )}>
-                            PHP {formatPHP(summary.remaining)} {isOver ? "over" : "left"}
-                          </span>
-                          <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted mt-2">
+
+                          {/* Progress bar */}
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
                             <div
                               className={cn(
                                 "h-full rounded-full transition-all duration-500",
@@ -2244,291 +2525,335 @@ export default function DashboardPage() {
                               style={{ width: `${Math.min(spentPct, 100)}%` }}
                             />
                           </div>
-                        </div>
-                      </div>
 
-                      {/* Expanded Section */}
-                      {isExpanded && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          className="mt-4 pt-4 border-t border-border/50 space-y-4"
-                        >
-                          <div className="flex items-center justify-between">
-                            <h5 className="text-[11px] font-semibold text-muted-foreground">Expense Log ({summary.expenses.length})</h5>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                if (isAddingExpense) {
-                                  setAddingExpenseForAllocId(null);
-                                } else {
-                                  setAddingExpenseForAllocId(summary.allocation_id);
-                                }
-                              }}
-                              className="h-7 text-[10px] text-blue-500 cursor-pointer"
-                            >
-                              {isAddingExpense ? "Cancel" : "Add Expense"}
-                            </Button>
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground font-medium px-0.5">
+                            <span>Budgeted: <span className="text-foreground font-semibold">PHP {formatPHP(summary.budgeted)}</span></span>
+                            <span>Spent: <span className="text-foreground font-semibold">PHP {formatPHP(summary.totalSpent)}</span></span>
                           </div>
+                        </div>
 
-                          {/* Expense Form */}
-                          {isAddingExpense && (
-                            <div className="rounded-lg border border-border bg-card/60 p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-                              <h6 className="text-[11px] font-bold text-foreground">Record Expense</h6>
-                              
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-medium text-muted-foreground">Description *</label>
-                                  <Input
-                                    placeholder="e.g. Cleaning and X-ray"
-                                    value={expenseDesc}
-                                    onChange={(e) => setExpenseDesc(e.target.value)}
-                                    className="h-8 text-xs"
-                                    autoComplete="off"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-medium text-muted-foreground">Amount (PHP) *</label>
-                                  <Input
-                                    type="number"
-                                    placeholder="e.g. 5300"
-                                    value={expenseAmount}
-                                    onChange={(e) => {
-                                      setExpenseAmount(e.target.value);
-                                      if (deductFromHeldFundId) {
-                                        setDeductAmount(e.target.value);
-                                      }
-                                    }}
-                                    className="h-8 text-xs"
-                                    autoComplete="off"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-medium text-muted-foreground">Date</label>
-                                  <Input
-                                    type="date"
-                                    value={expenseDate}
-                                    onChange={(e) => setExpenseDate(e.target.value)}
-                                    className="h-8 text-xs"
-                                    autoComplete="off"
-                                  />
-                                </div>
-
-                                {/* Held Fund Dropdown */}
-                                <div className="space-y-1">
-                                  <label className="text-[9px] font-medium text-muted-foreground">Deduct from Held Money? (Optional)</label>
-                                  <select
-                                    value={deductFromHeldFundId}
-                                    onChange={(e) => {
-                                      setDeductFromHeldFundId(e.target.value);
-                                      const found = heldFunds.find(f => f.id === e.target.value);
-                                      if (found) {
-                                        setDeductAmount(expenseAmount || '');
-                                      } else {
-                                        setDeductAmount('');
-                                      }
-                                    }}
-                                    className="w-full h-8 text-xs rounded-md border border-input bg-transparent px-3 py-1 shadow-sm transition-colors text-foreground bg-background"
-                                  >
-                                    <option value="" className="bg-background text-foreground">No, use my own cash/bank</option>
-                                    {heldFunds.filter(f => !f.is_returned).map(f => (
-                                      <option key={f.id} value={f.id} className="bg-background text-foreground">
-                                        {f.person_name} (PHP {formatPHP(f.current_amount)} left)
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
-
-                              {/* Shared Expense Toggle and Form */}
-                              <div className="space-y-3 pt-2 border-t border-border/40">
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    id={`is-shared-${summary.allocation_id}`}
-                                    checked={isShared}
-                                    onChange={(e) => {
-                                      setIsShared(e.target.checked);
-                                    }}
-                                    className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                  />
-                                  <label htmlFor={`is-shared-${summary.allocation_id}`} className="text-xs font-semibold text-foreground cursor-pointer">
-                                    This was a shared expense / someone else paid
-                                  </label>
-                                </div>
-
-                                {isShared && (
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-muted/40 p-3 rounded-lg border border-border/50">
-                                    <div className="space-y-1">
-                                      <label className="text-[9px] font-medium text-muted-foreground">Who paid? (e.g. Brother) *</label>
-                                      <Input
-                                        placeholder="e.g. Brother"
-                                        value={paidBy}
-                                        onChange={(e) => setPaidBy(e.target.value)}
-                                        className="h-8 text-xs"
-                                        autoComplete="off"
-                                      />
-                                    </div>
-                                    <div className="space-y-1">
-                                      <label className="text-[9px] font-medium text-muted-foreground">No. of splits</label>
-                                      <Input
-                                        type="number"
-                                        value={sharedParties}
-                                        onChange={(e) => {
-                                          const prt = parseInt(e.target.value) || 1;
-                                          setSharedParties(prt);
-                                        }}
-                                        className="h-8 text-xs"
-                                        min="1"
-                                        autoComplete="off"
-                                      />
-                                    </div>
-                                    <div className="col-span-full text-[10px] text-blue-500 font-medium">
-                                      Your share: PHP {formatPHP((parseFloat(expenseAmount) || 0) / sharedParties)} (This amount gets deducted from your allocation once settled)
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Deduction details */}
-                              {deductFromHeldFundId && (
-                                <div className="space-y-1 bg-blue-500/5 p-3 rounded-lg border border-blue-500/20">
-                                  <label className="text-[9px] font-medium text-blue-600 block">Amount to deduct from held money (PHP)</label>
-                                  <Input
-                                    type="number"
-                                    placeholder="Deduction amount"
-                                    value={deductAmount}
-                                    onChange={(e) => setDeductAmount(e.target.value)}
-                                    className="h-8 text-xs border-blue-200"
-                                    autoComplete="off"
-                                  />
-                                  <p className="text-[9px] text-blue-400 mt-1">
-                                    This will reduce the active held fund by this amount.
-                                  </p>
-                                </div>
-                              )}
-
-                              <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={isSavingExpense}
-                                  onClick={() => setAddingExpenseForAllocId(null)}
-                                  className="h-8 text-xs cursor-pointer"
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="default"
-                                  size="sm"
-                                  disabled={isSavingExpense}
-                                  onClick={() => handleCreateExpense(summary.allocation_id)}
-                                  className="h-8 bg-blue-600 hover:bg-blue-500 text-xs cursor-pointer"
-                                >
-                                  {isSavingExpense ? (
-                                    <span className="flex items-center gap-1.5">
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                      Recording...
-                                    </span>
-                                  ) : (
-                                    "Record Expense"
-                                  )}
-                                </Button>
-                              </div>
+                        {/* Expanded Section */}
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            className="mt-2 pt-4 border-t border-border/20 space-y-3.5 bg-black/15 -mx-4 -mb-4 p-4 rounded-b-xl"
+                          >
+                            <div className="flex items-center justify-between">
+                              <h5 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expense Log ({summary.expenses.length})</h5>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isSavingExpense || processingExpenseIds.length > 0}
+                                onClick={() => {
+                                  if (isAddingExpense) {
+                                    setAddingExpenseForAllocId(null);
+                                  } else {
+                                    setAddingExpenseForAllocId(summary.allocation_id);
+                                  }
+                                }}
+                                className="h-6 text-[10px] text-blue-500 cursor-pointer"
+                              >
+                                {isAddingExpense ? "Cancel" : "Add Expense"}
+                              </Button>
                             </div>
-                          )}
 
-                          {/* Expense List */}
-                          <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
-                            {summary.expenses.map((expense) => {
-                              const matchingFund = heldFunds.find(f => f.id === expense.held_fund_id);
-                              return (
-                                <div
-                                  key={expense.id}
-                                  className="group flex flex-col md:flex-row md:items-center justify-between rounded-lg bg-muted/40 p-3 hover:bg-muted/60 transition-colors duration-150"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[9px] text-muted-foreground font-semibold tabular-nums shrink-0">
-                                        {new Date(expense.expense_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
-                                      </span>
-                                      <span className="text-xs font-semibold text-foreground truncate">{expense.description}</span>
-                                    </div>
-                                    
-                                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                      {expense.is_shared && (
-                                        <Badge variant="secondary" className="text-[8px] h-4 bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5">
-                                          Shared split of {expense.shared_parties}x (Total: PHP {formatPHP(expense.shared_total ?? 0)})
-                                        </Badge>
-                                      )}
-                                      {expense.paid_by && (
-                                        <Badge variant="secondary" className={cn(
-                                          "text-[8px] h-4 border px-1.5",
-                                          expense.is_borrowing_settled
-                                            ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                            : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                                        )}>
-                                          {expense.is_borrowing_settled
-                                            ? `Paid by ${expense.paid_by}`
-                                            : `Owe ${expense.paid_by} (Unpaid)`}
-                                        </Badge>
-                                      )}
-                                      {expense.held_fund_id && (
-                                        <Badge variant="secondary" className="text-[8px] h-4 bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5">
-                                          Deducted from {matchingFund?.person_name || "Held Money"}&apos;s fund
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-3 justify-between mt-2 md:mt-0 shrink-0">
-                                    <span className={cn(
-                                      "text-xs font-bold tabular-nums",
-                                      (expense.borrowing_id && !expense.is_borrowing_settled)
-                                        ? "text-amber-500"
-                                        : "text-rose-400"
-                                    )}>
-                                      {(expense.borrowing_id && !expense.is_borrowing_settled)
-                                        ? `Owed PHP ${formatPHP(expense.amount)}`
-                                        : `-PHP ${formatPHP(expense.amount)}`}
-                                    </span>
-                                    <ConfirmDialog
-                                      trigger={
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-6 w-6 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity duration-150"
-                                          title="Delete Expense"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </Button>
-                                      }
-                                      title="Delete Expense"
-                                      description="Are you sure you want to delete this expense? This will restore any deducted funds and delete any linked borrowing debt."
-                                      confirmLabel="Delete"
-                                      destructive
-                                      onConfirm={() => handleDeleteExpense(expense.id)}
+                            {/* Expense Form */}
+                            {isAddingExpense && (
+                              <div className="rounded-lg border border-border/40 bg-background/40 backdrop-blur-sm p-3.5 space-y-3" onClick={(e) => e.stopPropagation()}>
+                                <h6 className="text-[11px] font-bold text-foreground">Record Expense</h6>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Description *</label>
+                                    <Input
+                                      placeholder="e.g. Cleaning and X-ray"
+                                      value={expenseDesc}
+                                      onChange={(e) => setExpenseDesc(e.target.value)}
+                                      className="h-8 text-xs bg-background/40"
+                                      autoComplete="off"
                                     />
                                   </div>
-                                </div>
-                              );
-                            })}
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Amount (PHP) *</label>
+                                    <Input
+                                      type="number"
+                                      placeholder="e.g. 5300"
+                                      value={expenseAmount}
+                                      onChange={(e) => {
+                                        setExpenseAmount(e.target.value);
+                                        if (deductFromHeldFundId) {
+                                          setDeductAmount(e.target.value);
+                                        }
+                                      }}
+                                      className="h-8 text-xs bg-background/40"
+                                      autoComplete="off"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Date</label>
+                                    <Input
+                                      type="date"
+                                      value={expenseDate}
+                                      onChange={(e) => setExpenseDate(e.target.value)}
+                                      className="h-8 text-xs bg-background/40"
+                                      autoComplete="off"
+                                    />
+                                  </div>
 
-                            {summary.expenses.length === 0 && (
-                              <div className="flex items-center justify-center py-6 text-[10px] text-muted-foreground border border-dashed border-border/40 rounded-lg">
-                                No expenses logged against this fund
+                                  {/* Held Fund Dropdown */}
+                                  <div className="space-y-1">
+                                    <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Deduct from Held Money? (Optional)</label>
+                                    <Select
+                                      value={deductFromHeldFundId || "none"}
+                                      onValueChange={(val) => {
+                                        const actualVal = (val === "none" || !val) ? "" : val;
+                                        setDeductFromHeldFundId(actualVal);
+                                        const found = heldFunds.find(f => f.id === actualVal);
+                                        if (found) {
+                                          setDeductAmount(expenseAmount || '');
+                                        } else {
+                                          setDeductAmount('');
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger className="w-full h-8 text-xs bg-background/40 font-medium">
+                                        <SelectValue placeholder="No, use my own cash/bank">
+                                          {(val) => {
+                                            if (!val || val === "none") return "No, use my own cash/bank";
+                                            const fund = heldFunds.find(f => f.id === val);
+                                            return fund ? `${fund.person_name} (PHP ${formatPHP(fund.current_amount)} left)` : "No, use my own cash/bank";
+                                          }}
+                                        </SelectValue>
+                                      </SelectTrigger>
+                                      <SelectContent alignItemWithTrigger={false} sideOffset={4} align="start" className="bg-popover text-popover-foreground">
+                                        <SelectItem value="none" className="text-xs">No, use my own cash/bank</SelectItem>
+                                        {heldFunds.filter(f => !f.is_returned).map(f => (
+                                          <SelectItem key={f.id} value={f.id} className="text-xs">
+                                            {f.person_name} (PHP {formatPHP(f.current_amount)} left)
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+
+                                {/* Shared Expense Toggle and Form */}
+                                <div className="space-y-3 pt-2 border-t border-border/20">
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      id={`is-shared-${summary.allocation_id}`}
+                                      checked={isShared}
+                                      onChange={(e) => {
+                                        setIsShared(e.target.checked);
+                                      }}
+                                      className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    />
+                                    <label htmlFor={`is-shared-${summary.allocation_id}`} className="text-xs font-semibold text-foreground cursor-pointer select-none">
+                                      This was a shared expense / someone else paid
+                                    </label>
+                                  </div>
+
+                                  {isShared && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-muted/40 p-3 rounded-lg border border-border/40">
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Who paid? (e.g. Brother) *</label>
+                                        <Input
+                                          placeholder="e.g. Brother"
+                                          value={paidBy}
+                                          onChange={(e) => setPaidBy(e.target.value)}
+                                          className="h-8 text-xs bg-background/40"
+                                          autoComplete="off"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">No. of splits</label>
+                                        <Input
+                                          type="number"
+                                          value={sharedParties}
+                                          onChange={(e) => {
+                                            const prt = parseInt(e.target.value) || 1;
+                                            setSharedParties(prt);
+                                          }}
+                                          className="h-8 text-xs bg-background/40"
+                                          min="1"
+                                          autoComplete="off"
+                                        />
+                                      </div>
+                                      <div className="col-span-full text-[10px] text-blue-400 font-medium">
+                                        {paidBy && paidBy.trim() ? (
+                                          sharedParties === 1 ? (
+                                            `You are borrowing the full PHP ${formatPHP(parseFloat(expenseAmount) || 0)} from ${paidBy.trim()}. (This amount will be recorded as a debt and deducted from your allocation once settled)`
+                                          ) : (
+                                            `Your share: PHP ${formatPHP((parseFloat(expenseAmount) || 0) / sharedParties)} (You borrow this amount from ${paidBy.trim()}, and it gets deducted from your allocation once settled)`
+                                          )
+                                        ) : (
+                                          sharedParties === 1 ? (
+                                            `Since you paid, the full PHP ${formatPHP(parseFloat(expenseAmount) || 0)} is deducted from your allocation immediately.`
+                                          ) : (
+                                            `Your share: PHP ${formatPHP((parseFloat(expenseAmount) || 0) / sharedParties)} (Since you paid, this amount is deducted from your allocation immediately. The remaining PHP ${formatPHP((parseFloat(expenseAmount) || 0) * (sharedParties - 1) / sharedParties)} is paid/lent for others.)`
+                                          )
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Deduction details */}
+                                {deductFromHeldFundId && (
+                                  <div className="space-y-1 bg-blue-500/5 p-3 rounded-lg border border-blue-500/20">
+                                    <label className="text-[9px] font-semibold text-blue-400 block uppercase tracking-wider">Amount to deduct from held money (PHP)</label>
+                                    <Input
+                                      type="number"
+                                      placeholder="Deduction amount"
+                                      value={deductAmount}
+                                      onChange={(e) => setDeductAmount(e.target.value)}
+                                      className="h-8 text-xs border-blue-500/30 bg-background/40"
+                                      autoComplete="off"
+                                    />
+                                    <p className="text-[9px] text-blue-400 mt-1">
+                                      This will reduce the active held fund by this amount.
+                                    </p>
+                                  </div>
+                                )}
+
+                                <div className="flex justify-end gap-2 pt-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={isSavingExpense}
+                                    onClick={() => setAddingExpenseForAllocId(null)}
+                                    className="h-8 text-xs cursor-pointer"
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="default"
+                                    size="sm"
+                                    disabled={isSavingExpense}
+                                    onClick={() => handleCreateExpense(summary.allocation_id)}
+                                    className="h-8 bg-blue-600 hover:bg-blue-500 text-xs cursor-pointer"
+                                  >
+                                    {isSavingExpense ? (
+                                      <span className="flex items-center gap-1.5">
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        Recording...
+                                      </span>
+                                    ) : (
+                                      "Record Expense"
+                                    )}
+                                  </Button>
+                                </div>
                               </div>
                             )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
-                  );
-                })}
+
+                            {/* Expense List */}
+                            <div className="space-y-1 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
+                              {summary.expenses.map((expense) => {
+                                const matchingFund = heldFunds.find(f => f.id === expense.held_fund_id);
+                                const isExpenseDeleting = processingExpenseIds.includes(expense.id);
+                                return (
+                                  <div
+                                    key={expense.id}
+                                    className={cn(
+                                      "group flex items-center justify-between border-b border-border/10 py-2.5 last:border-b-0 transition-colors duration-150",
+                                      isExpenseDeleting && "opacity-50 pointer-events-none"
+                                    )}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="min-w-0 pr-4">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[9px] text-muted-foreground font-medium tabular-nums shrink-0">
+                                          {new Date(expense.expense_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                                        </span>
+                                        <span className="text-xs font-semibold text-foreground truncate">{expense.description}</span>
+                                      </div>
+                                      
+                                      <div className="flex flex-wrap gap-1.5 mt-1">
+                                        {expense.is_shared && (
+                                          <Badge variant="secondary" className="text-[8px] h-3.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1 py-0 leading-none">
+                                            Shared {expense.shared_parties}x (Total: PHP {formatPHP(expense.shared_total ?? 0)})
+                                          </Badge>
+                                        )}
+                                        {expense.paid_by && (
+                                          <Badge variant="secondary" className={cn(
+                                            "text-[8px] h-3.5 border px-1 py-0 leading-none",
+                                            expense.is_borrowing_settled
+                                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                          )}>
+                                            {expense.is_borrowing_settled
+                                              ? `Paid by ${expense.paid_by}`
+                                              : `Owe ${expense.paid_by}`}
+                                          </Badge>
+                                        )}
+                                        {expense.held_fund_id && (
+                                          <Badge variant="secondary" className="text-[8px] h-3.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1 py-0 leading-none">
+                                            Deducted: {matchingFund?.person_name || "Held Fund"}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <span className={cn(
+                                        "text-xs font-bold tabular-nums text-right",
+                                        (expense.borrowing_id && !expense.is_borrowing_settled)
+                                          ? "text-amber-500"
+                                          : (expense.held_fund_id && !expense.borrowing_id)
+                                            ? "text-blue-400"
+                                            : "text-rose-400"
+                                      )}>
+                                        {(expense.borrowing_id && !expense.is_borrowing_settled)
+                                          ? `Owed PHP ${formatPHP(expense.amount)}`
+                                          : (expense.held_fund_id && !expense.borrowing_id)
+                                            ? `PHP 0.00 (PHP ${formatPHP(expense.amount)} held)`
+                                            : `-PHP ${formatPHP(expense.amount)}`}
+                                      </span>
+                                      <ConfirmDialog
+                                        trigger={
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            disabled={isSavingExpense || processingExpenseIds.length > 0}
+                                            className={cn(
+                                              "h-6 w-6 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer transition-opacity duration-150",
+                                              isExpenseDeleting ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                            )}
+                                            title="Delete Expense"
+                                          >
+                                            {isExpenseDeleting ? (
+                                              <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            )}
+                                          </Button>
+                                        }
+                                        title="Delete Expense"
+                                        description="Are you sure you want to delete this expense? This will restore any deducted funds and delete any linked borrowing debt."
+                                        confirmLabel="Delete"
+                                        destructive
+                                        onConfirm={() => handleDeleteExpense(expense.id)}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {summary.expenses.length === 0 && (
+                                <div className="flex items-center justify-center py-6 text-[10px] text-muted-foreground border border-dashed border-border/30 rounded-lg">
+                                  No expenses logged against this fund
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </CardContent>
           </Card>

@@ -1431,10 +1431,14 @@ export async function getAllocationFundSummaries(
     const allocExpenses = expenseMap.get(alloc.id) ?? [];
     
     // Only count expenses that have actually been spent from the user's cash/bank.
-    // That means: either no borrowing is linked, or the linked borrowing is already marked as settled.
+    // That means:
+    // 1. If it was paid from a held fund and no borrowing is linked, it was spent for the other person (using their own money), so the user spent 0.
+    // 2. Either no borrowing is linked, or the linked borrowing is already marked as settled.
     const totalSpent = allocExpenses.reduce((sum, e) => {
-      const isSettled = e.borrowing_id ? (borrowingSettledMap.get(e.borrowing_id) ?? false) : true;
-      return sum + (isSettled ? Number(e.amount ?? 0) : 0);
+      if (e.held_fund_id && !e.borrowing_id) {
+        return sum;
+      }
+      return sum + Number(e.amount ?? 0);
     }, 0);
 
     const budgeted = hasPeriodData ? (allocatedMap.get(alloc.id) ?? 0) : alloc.amount;
