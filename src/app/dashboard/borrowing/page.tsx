@@ -345,9 +345,6 @@ export default function BorrowingPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const user = await getCurrentUser();
-      if (user) setUserId(user.id);
-
       // Compute dateRange
       const now = new Date();
       const year = now.getFullYear();
@@ -393,12 +390,14 @@ export default function BorrowingPage() {
           break;
       }
 
-      const [active, settled, sum] = await Promise.all([
+      const [user, active, settled, sum] = await Promise.all([
+        getCurrentUser().catch(() => null),
         getBorrowingsWithExpenses({ settled: false, dateFrom, dateTo }),
         getBorrowings({ settled: true, dateFrom, dateTo }),
         getBorrowingSummary({ dateFrom, dateTo }),
       ]);
 
+      if (user) setUserId(user.id);
       setActiveBorrowings(active);
       setSettledBorrowings(settled);
       setSummary(sum);

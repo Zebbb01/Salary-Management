@@ -172,11 +172,14 @@ export default function SettingsPage() {
   // ---------------------------------------------------------------------------
   const fetchData = useCallback(async () => {
     try {
-      const user = await getCurrentUser();
+      const [user, salaryConfig] = await Promise.all([
+        getCurrentUser().catch(() => null),
+        getSalaryConfig().catch(() => null),
+      ]);
+
       if (user?.email) setUserEmail(user.email);
       if (user?.id) setUserId(user.id);
 
-      const salaryConfig = await getSalaryConfig();
       if (salaryConfig) {
         setConfig(salaryConfig);
         setName(salaryConfig.name);
@@ -184,8 +187,15 @@ export default function SettingsPage() {
         setPartTimeSalary(salaryConfig.part_time_salary ?? 0);
         setPayFrequency(salaryConfig.pay_frequency ?? 'semi-monthly');
         setConsumableAllowance(salaryConfig.consumable_allowance ?? 4500);
+      }
 
-        const allocs = await getBudgetAllocations(salaryConfig.id);
+      // Stage 2: Fetch budget allocations and seed allocation types in parallel
+      const [allocs, types] = await Promise.all([
+        salaryConfig ? getBudgetAllocations(salaryConfig.id).catch(() => []) : Promise.resolve([]),
+        user?.id ? seedDefaultAllocationTypes(user.id).catch(() => []) : Promise.resolve([]),
+      ]);
+
+      if (salaryConfig && allocs) {
         setAllocations(allocs);
 
         const combinedSalary = salaryConfig.full_time_salary + (salaryConfig.part_time_salary ?? 0);
@@ -215,9 +225,7 @@ export default function SettingsPage() {
         setAllocationFixedStates(fixedMap);
       }
 
-      // Load or seed allocation types
-      if (user?.id) {
-        const types = await seedDefaultAllocationTypes(user.id);
+      if (types) {
         setAllocationTypes(types);
       }
     } catch (err) {

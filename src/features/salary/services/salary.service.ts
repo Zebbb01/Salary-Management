@@ -538,42 +538,104 @@ export async function initMonthlyBills(
 
 export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: string }): Promise<FinancialSummary> {
   const supabase = createClient();
-  
-  // Fetch live budget allocations and types to get up-to-date classifications
-  const { data: dbAllocations } = await supabase
-    .from('budget_allocations')
-    .select('id, allocation_type_id');
-  
-  const { data: dbTypes } = await supabase
-    .from('allocation_types')
-    .select('id, classification');
-  
-  const allocationClassificationMap = new Map<string, string>();
-  if (dbAllocations && dbTypes) {
-    const typeMap = new Map(dbTypes.map((t) => [t.id, t.classification]));
-    for (const alloc of dbAllocations) {
-      if (alloc.allocation_type_id) {
-        const classification = typeMap.get(alloc.allocation_type_id);
-        if (classification) {
-          allocationClassificationMap.set(alloc.id, classification);
-        }
-      }
-    }
-  }
 
-  let query = supabase
+  // 1. Build pay_periods query
+  let periodsQuery = supabase
     .from('pay_periods')
     .select('id, total_income, total_tax, total_deductions, total_expenses, total_savings, allocation_amounts, first_wage, second_wage, part_time, additional_income, spare_amount')
     .order('created_at', { ascending: false });
 
-  if (opts?.dateFrom) query = query.gte('created_at', opts.dateFrom);
-  if (opts?.dateTo) query = query.lte('created_at', opts.dateTo);
+  if (opts?.dateFrom) periodsQuery = periodsQuery.gte('created_at', opts.dateFrom);
+  if (opts?.dateTo) periodsQuery = periodsQuery.lte('created_at', opts.dateTo);
 
-  const { data, error } = await query;
+  // 2. Build spare_transactions query
+  let spareQuery = supabase
+    .from('spare_transactions')
+    .select('amount, pay_period_id, transaction_date');
 
-  if (error) throw error;
+  if (opts?.dateFrom) spareQuery = spareQuery.gte('transaction_date', opts.dateFrom.substring(0, 10));
+  if (opts?.dateTo) spareQuery = spareQuery.lte('transaction_date', opts.dateTo.substring(0, 10));
 
-  const periods = data ?? [];
+  // 3. Build borrowings (active) query
+  const activeBorrowingQuery = supabase
+    .from('borrowings')
+    .select('id, type, amount')
+    .eq('is_settled', false);
+
+  // 4. Build borrowing_expenses query
+  let beQuery = supabase
+    .from('borrowing_expenses')
+    .select('amount, expense_date');
+
+  if (opts?.dateFrom) {
+    beQuery = beQuery.gte('expense_date', opts.dateFrom.substring(0, 10));
+  }
+  if (opts?.dateTo) {
+    beQuery = beQuery.lte('expense_date', opts.dateTo.substring(0, 10));
+  }
+
+  // 5. Build borrowings (gifted) query
+  let gQuery = supabase
+    .from('borrowings')
+    .select('type, amount')
+    .eq('is_gifted', true);
+
+  if (opts?.dateFrom) gQuery = gQuery.gte('settled_at', opts.dateFrom);
+  if (opts?.dateTo) gQuery = gQuery.lte('settled_at', opts.dateTo);
+
+  // 6. Build consumable_expenses query
+  let cQuery = supabase
+    .from('consumable_expenses')
+    .select('amount');
+
+  if (opts?.dateFrom) {
+    cQuery = cQuery.gte('expense_date', opts.dateFrom);
+  }
+  if (opts?.dateTo) {
+    cQuery = cQuery.lte('expense_date', opts.dateTo);
+  }
+
+  // 7 & 8. budget_allocations and allocation_types
+  const allocationsQuery = supabase
+    .from('budget_allocations')
+    .select('id, allocation_type_id');
+
+  const typesQuery = supabase
+    .from('allocation_types')
+    .select('id, classification');
+
+  // Run all 8 queries concurrently
+  const [
+    allocationsRes,
+    typesRes,
+    periodsRes,
+    spareRes,
+    activeBorrowingRes,
+    beRes,
+    giftedRes,
+    cRes
+  ] = await Promise.all([
+    allocationsQuery,
+    typesQuery,
+    periodsQuery,
+    spareQuery,
+    activeBorrowingQuery,
+    beQuery,
+    gQuery,
+    cQuery
+  ]);
+
+  if (periodsRes.error) throw periodsRes.error;
+
+  const dbAllocations = allocationsRes.data;
+  const dbTypes = typesRes.data;
+  const periods = periodsRes.data ?? [];
+  const spareData = spareRes.data ?? [];
+  const activeBorrowingData = activeBorrowingRes.data ?? [];
+  const expData = beRes.data ?? [];
+  const giftedData = giftedRes.data ?? [];
+  const cData = cRes.data ?? [];
+
   const grossIncome = periods.reduce((s, p) => s + Number(p.total_income ?? 0), 0);
   const totalTax = periods.reduce((s, p) => s + Number(p.total_tax ?? 0), 0);
   const totalDeductions = periods.reduce((s, p) => s + Number(p.total_deductions ?? 0), 0);
@@ -592,25 +654,27 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   // Fetch spare transactions for the date range to compute total spent
   let totalSpareSpent = 0;
   const spareSpentByPeriod = new Map<string, number>();
-  
-  let spareQuery = supabase
-    .from('spare_transactions')
-    .select('amount, pay_period_id, transaction_date');
 
-  if (opts?.dateFrom) spareQuery = spareQuery.gte('transaction_date', opts.dateFrom.substring(0, 10));
-  if (opts?.dateTo) spareQuery = spareQuery.lte('transaction_date', opts.dateTo.substring(0, 10));
+  for (const row of spareData) {
+    const amt = Number(row.amount ?? 0);
+    totalSpareSpent += amt;
+    if (row.pay_period_id) {
+      spareSpentByPeriod.set(
+        row.pay_period_id,
+        (spareSpentByPeriod.get(row.pay_period_id) ?? 0) + amt
+      );
+    }
+  }
 
-  const { data: spareData, error: spareError } = await spareQuery;
-
-  if (!spareError && spareData) {
-    for (const row of spareData) {
-      const amt = Number(row.amount ?? 0);
-      totalSpareSpent += amt;
-      if (row.pay_period_id) {
-        spareSpentByPeriod.set(
-          row.pay_period_id,
-          (spareSpentByPeriod.get(row.pay_period_id) ?? 0) + amt
-        );
+  const allocationClassificationMap = new Map<string, string>();
+  if (dbAllocations && dbTypes) {
+    const typeMap = new Map(dbTypes.map((t) => [t.id, t.classification]));
+    for (const alloc of dbAllocations) {
+      if (alloc.allocation_type_id) {
+        const classification = typeMap.get(alloc.allocation_type_id);
+        if (classification) {
+          allocationClassificationMap.set(alloc.id, classification);
+        }
       }
     }
   }
@@ -653,80 +717,29 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   let totalBorrowed = 0;
   let totalLent = 0;
   let totalBorrowingExpensesSpent = 0;
-  const { data: activeBorrowingData } = await supabase
-    .from('borrowings')
-    .select('id, type, amount')
-    .eq('is_settled', false);
 
-  if (activeBorrowingData) {
-    for (const b of activeBorrowingData) {
-      if (b.type === 'borrowed') totalBorrowed += Number(b.amount ?? 0);
-      else if (b.type === 'lent') totalLent += Number(b.amount ?? 0);
-    }
+  for (const b of activeBorrowingData) {
+    if (b.type === 'borrowed') totalBorrowed += Number(b.amount ?? 0);
+    else if (b.type === 'lent') totalLent += Number(b.amount ?? 0);
   }
 
-  // Fetch borrowing expenses filtered by date range for spare calculation
-  // This ensures the dashboard spare matches the selected date filter
-  {
-    let beQuery = supabase
-      .from('borrowing_expenses')
-      .select('amount, expense_date');
-
-    if (opts?.dateFrom) {
-      beQuery = beQuery.gte('expense_date', opts.dateFrom.substring(0, 10));
-    }
-    if (opts?.dateTo) {
-      beQuery = beQuery.lte('expense_date', opts.dateTo.substring(0, 10));
-    }
-
-    const { data: expData } = await beQuery;
-
-    if (expData) {
-      for (const e of expData) {
-        totalBorrowingExpensesSpent += Number(e.amount ?? 0);
-      }
-    }
+  for (const e of expData) {
+    totalBorrowingExpensesSpent += Number(e.amount ?? 0);
   }
 
   // Fetch gifted (forgiven) borrowings
   let giftedIncome = 0;
   let forgivenLent = 0;
-  let gQuery = supabase
-    .from('borrowings')
-    .select('type, amount')
-    .eq('is_gifted', true);
 
-  if (opts?.dateFrom) gQuery = gQuery.gte('settled_at', opts.dateFrom);
-  if (opts?.dateTo) gQuery = gQuery.lte('settled_at', opts.dateTo);
-
-  const { data: giftedData } = await gQuery;
-  if (giftedData) {
-    for (const b of giftedData) {
-      if (b.type === 'borrowed') giftedIncome += Number(b.amount ?? 0);
-      else if (b.type === 'lent') forgivenLent += Number(b.amount ?? 0);
-    }
+  for (const b of giftedData) {
+    if (b.type === 'borrowed') giftedIncome += Number(b.amount ?? 0);
+    else if (b.type === 'lent') forgivenLent += Number(b.amount ?? 0);
   }
 
   // Fetch consumable expenses total for the date range
   let totalConsumableSpent = 0;
-  {
-    let cQuery = supabase
-      .from('consumable_expenses')
-      .select('amount');
-
-    if (opts?.dateFrom) {
-      cQuery = cQuery.gte('expense_date', opts.dateFrom);
-    }
-    if (opts?.dateTo) {
-      cQuery = cQuery.lte('expense_date', opts.dateTo);
-    }
-
-    const { data: cData } = await cQuery;
-    if (cData) {
-      for (const row of cData) {
-        totalConsumableSpent += Number(row.amount ?? 0);
-      }
-    }
+  for (const row of cData) {
+    totalConsumableSpent += Number(row.amount ?? 0);
   }
 
   return {
@@ -1365,8 +1378,25 @@ export async function getAllocationFundSummaries(
     expenseQuery = expenseQuery.lte('expense_date', opts.dateTo.substring(0, 10));
   }
 
-  const { data: expenses, error: eError } = await expenseQuery;
+  // 2. Query pay periods in range to sum actual allocated amounts
+  let periodQuery = supabase
+    .from('pay_periods')
+    .select('allocation_amounts')
+    .eq('user_id', userId);
+
+  if (opts?.dateFrom) periodQuery = periodQuery.gte('created_at', opts.dateFrom);
+  if (opts?.dateTo) periodQuery = periodQuery.lte('created_at', opts.dateTo);
+
+  // Fetch allocation expenses and periods in parallel
+  const [expensesRes, periodsRes] = await Promise.all([
+    expenseQuery,
+    periodQuery,
+  ]);
+
+  const { data: expenses, error: eError } = expensesRes;
   if (eError) throw eError;
+
+  const { data: periods, error: pError } = periodsRes;
 
   // 1b. Fetch borrowings to check settlement status for unpaid shared expenses
   const borrowingIds = (expenses ?? [])
@@ -1398,17 +1428,6 @@ export async function getAllocationFundSummaries(
     });
     expenseMap.set(exp.allocation_id, list);
   }
-
-  // 2. Query pay periods in range to sum actual allocated amounts
-  let periodQuery = supabase
-    .from('pay_periods')
-    .select('allocation_amounts')
-    .eq('user_id', userId);
-
-  if (opts?.dateFrom) periodQuery = periodQuery.gte('created_at', opts.dateFrom);
-  if (opts?.dateTo) periodQuery = periodQuery.lte('created_at', opts.dateTo);
-
-  const { data: periods, error: pError } = await periodQuery;
   
   const allocatedMap = new Map<string, number>();
   const hasPeriodData = !pError && periods && periods.length > 0;

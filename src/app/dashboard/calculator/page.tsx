@@ -360,31 +360,33 @@ export default function CalculatorPage() {
   // ---------------------------------------------------------------------------
   const loadLastPeriod = useCallback(async () => {
     try {
-      // Fetch salary config and budget allocations
-      const config = await getSalaryConfig();
+      // Stage 1: Fetch independent configuration and lists in parallel
+      const [config, expenses, types, periods, existingBills] = await Promise.all([
+        getSalaryConfig().catch(() => null),
+        getConsumableExpenses(currentMonth).catch(() => []),
+        getAllocationTypes().catch(() => []),
+        getPayPeriods(20).catch(() => []),
+        getBillPayments(currentMonth).catch(() => []),
+      ]);
+
+      setSavedPeriods(periods);
+
       let computed: BudgetAllocationWithAmount[] = [];
+      const typeMap = new Map(types.map((t) => [t.id, t]));
+
       if (config) {
         setSalaryConfig(config);
         setPayFrequency(config.pay_frequency ?? 'semi-monthly');
         setConsumableAllowance(config.consumable_allowance ?? 4500);
-        const allocs = await getBudgetAllocations(config.id);
+        setConsumableExpenses(expenses);
+
+        // Stage 2: Fetch budget allocations using the loaded config ID
+        const allocs = await getBudgetAllocations(config.id).catch(() => []);
         const combinedSalary = config.full_time_salary + config.part_time_salary;
         computed = computeAllocations(allocs, combinedSalary);
         setBudgetAllocations(computed);
 
-        // Load consumable expenses for current month
-        try {
-          const expenses = await getConsumableExpenses(currentMonth);
-          setConsumableExpenses(expenses);
-        } catch {
-          // Silently fail
-        }
-
         // Pre-fill allocation_amounts from budget allocations (excluding 'Spare')
-        // Fetch allocation types to include classification
-        const types = await getAllocationTypes();
-        const typeMap = new Map(types.map((t) => [t.id, t]));
-
         const allocAmounts: AllocationAmount[] = computed
           .filter((a) => a.category.toLowerCase() !== 'spare')
           .map((a) => {
@@ -415,23 +417,7 @@ export default function CalculatorPage() {
         setValue('allocation_amounts', allocAmounts);
       }
 
-      const periods = await getPayPeriods(20);
-      setSavedPeriods(periods);
-
-      // Fetch current month's bill payments to calculate remaining balances
-      const existingBills = await getBillPayments(currentMonth);
       const billMap = new Map(existingBills.map((b) => [b.allocation_id, b]));
-
-      // Always derive budgeted amounts from CURRENT config (not stale saved period values)
-      // This ensures Settings changes are immediately reflected in the Calculator
-      // Re-use typeMap from above if available, otherwise fetch
-      let typeMap: Map<string, AllocationType>;
-      try {
-        const types = await getAllocationTypes();
-        typeMap = new Map(types.map((t) => [t.id, t]));
-      } catch {
-        typeMap = new Map();
-      }
 
       const currentAllocAmounts: AllocationAmount[] = computed
         .filter((a) => a.category.toLowerCase() !== 'spare')

@@ -947,17 +947,57 @@ export default function DashboardPage() {
       const { dateFrom, dateTo, billMonth } = getDateRange(filter, custom);
       const dateOpts = { dateFrom, dateTo };
 
-      // Get current user
-      const user = await getCurrentUser();
+      // Calculate starting balance summary date filter
+      let startingDateOpts = null;
+      if (dateOpts.dateFrom) {
+        const dFrom = new Date(dateOpts.dateFrom);
+        dFrom.setDate(dFrom.getDate() - 1);
+        startingDateOpts = { dateTo: dFrom.toISOString() };
+      }
+
+      // STAGE 1: Fetch all independent data in parallel
+      const [
+        user,
+        configRes,
+        types,
+        periodData,
+        rangePeriodsRes,
+        summary,
+        allTimeSummary,
+        startingSummary,
+        trend,
+        spareTxns,
+        bSummary,
+        hasAnyPeriods
+      ] = await Promise.all([
+        getCurrentUser().catch(() => null),
+        supabase.from('salary_configs').select('*').single(),
+        getAllocationTypes().catch(() => []),
+        getLatestPeriodInRange(dateOpts).catch(() => null),
+        (() => {
+          let q = supabase
+            .from('pay_periods')
+            .select('allocation_amounts')
+            .order('created_at', { ascending: false });
+          if (dateOpts.dateFrom) q = q.gte('created_at', dateOpts.dateFrom);
+          if (dateOpts.dateTo) q = q.lte('created_at', dateOpts.dateTo);
+          return q;
+        })(),
+        getFinancialSummary(dateOpts).catch(() => null),
+        getFinancialSummary().catch(() => null),
+        startingDateOpts ? getFinancialSummary(startingDateOpts).catch(() => null) : Promise.resolve(null),
+        getPayPeriodTrend(6, dateOpts).catch(() => []),
+        getSpareTransactionsInRange(dateOpts).catch(() => []),
+        getBorrowingSummary().catch(() => null),
+        getPayPeriods(1).catch(() => [])
+      ]);
+
       if (user) {
         setUserId(user.id);
       }
 
-      // Fetch salary config
-      const { data: configData, error: configError } = await supabase
-        .from('salary_configs')
-        .select('*')
-        .single();
+      const configData = configRes.data;
+      const configError = configRes.error;
 
       if (configError && configError.code !== 'PGRST116') {
         throw configError;
@@ -970,44 +1010,20 @@ export default function DashboardPage() {
       }
 
       setSalaryConfig(configData);
-
-      // Fetch budget allocations
-      const { data: allocData, error: allocError } = await supabase
-        .from('budget_allocations')
-        .select('*')
-        .eq('salary_config_id', configData.id)
-        .order('display_order', { ascending: true });
-
-      if (allocError) throw allocError;
-
-      // Use combined salary (full-time + part-time) for budget allocations
-      const totalSalary = (configData.full_time_salary ?? 0) + (configData.part_time_salary ?? 0);
-      const computed = computeAllocations(allocData ?? [], totalSalary);
-      setAllocations(computed);
-
-      // Fetch allocation types for classification filtering
-      try {
-        const types = await getAllocationTypes();
-        setAllocationTypes(types);
-      } catch {
-        // Silently fail - filter will default to showing all
-      }
-
-      // Fetch latest pay period within selected date range
-      const periodData = await getLatestPeriodInRange(dateOpts);
+      setAllocationTypes(types);
       setLatestPeriod(periodData);
+      setFinancialSummary(summary);
+      setAllTimeFinancialSummary(allTimeSummary);
+      setStartingBalanceSummary(startingSummary);
+      setTrendData(trend);
+      setSpareTransactions(spareTxns);
+      setBorrowingSummary(bSummary);
 
-      // Fetch all pay periods in range to get actual allocations
-      let periodQuery = supabase
-        .from('pay_periods')
-        .select('allocation_amounts')
-        .order('created_at', { ascending: false });
+      const hasPeriodsVal = hasAnyPeriods.length > 0;
+      setHasPeriods(hasPeriodsVal);
 
-      if (dateOpts.dateFrom) periodQuery = periodQuery.gte('created_at', dateOpts.dateFrom);
-      if (dateOpts.dateTo) periodQuery = periodQuery.lte('created_at', dateOpts.dateTo);
-
-      const { data: rangePeriods } = await periodQuery;
-
+      // Process range periods
+      const rangePeriods = rangePeriodsRes.data;
       if (rangePeriods && rangePeriods.length > 0) {
         const map = new Map<string, number>();
         for (const p of rangePeriods) {
@@ -1026,100 +1042,58 @@ export default function DashboardPage() {
         setHasPeriodData(false);
       }
 
-      // Fetch spare transactions total for the latest pay period
-      if (periodData?.id) {
-        const spent = await getSpareTotal(periodData.id);
-        setSpareSpent(spent);
-      } else {
-        setSpareSpent(0);
-      }
+      // STAGE 2: Fetch data depending on user, configData, and periodData
+      const [
+        allocRes,
+        spent,
+        consumable,
+        funds
+      ] = await Promise.all([
+        supabase
+          .from('budget_allocations')
+          .select('*')
+          .eq('salary_config_id', configData.id)
+          .order('display_order', { ascending: true }),
+        periodData?.id ? getSpareTotal(periodData.id).catch(() => 0) : Promise.resolve(0),
+        getConsumableBudgetSummary(billMonth, configData.consumable_allowance ?? 4500).catch(() => null),
+        user ? getHeldFunds().catch(() => []) : Promise.resolve([])
+      ]);
 
-      // Fetch financial summary with date filter
-      const summary = await getFinancialSummary(dateOpts);
-      setFinancialSummary(summary);
+      if (allocRes.error) throw allocRes.error;
+
+      const allocData = allocRes.data ?? [];
+      const totalSalary = (configData.full_time_salary ?? 0) + (configData.part_time_salary ?? 0);
+      const computed = computeAllocations(allocData, totalSalary);
       
-      // Fetch all-time financial summary for Overall Wallet balance
-      const allTimeSummary = await getFinancialSummary();
-      setAllTimeFinancialSummary(allTimeSummary);
+      setAllocations(computed);
+      setSpareSpent(spent);
+      setConsumableSummary(consumable);
+      setHeldFunds(funds);
 
-      // Fetch starting balance summary (up to dateFrom - 1 day)
-      let startingSummary = null;
-      if (dateOpts.dateFrom) {
-        const dFrom = new Date(dateOpts.dateFrom);
-        dFrom.setDate(dFrom.getDate() - 1);
-        startingSummary = await getFinancialSummary({ dateTo: dFrom.toISOString() });
-      }
-      setStartingBalanceSummary(startingSummary);
-
-      // Fetch trend data with date filter
-      const trend = await getPayPeriodTrend(6, dateOpts);
-      setTrendData(trend);
-
-      // Fetch spare transactions for the breakdown section
-      try {
-        const spareTxns = await getSpareTransactionsInRange(dateOpts);
-        setSpareTransactions(spareTxns);
-      } catch {
-        setSpareTransactions([]);
-      }
-
-      // Fetch consumable budget summary for the selected date filter month
-      try {
-        const allowance = configData.consumable_allowance ?? 4500;
-        const consumable = await getConsumableBudgetSummary(billMonth, allowance);
-        setConsumableSummary(consumable);
-      } catch {
-        setConsumableSummary(null);
-      }
-
-      // Fetch borrowing summary
-      try {
-        const bSummary = await getBorrowingSummary();
-        setBorrowingSummary(bSummary);
-      } catch {
-        setBorrowingSummary(null);
-      }
-
-      // Fetch held funds and allocation fund summaries
-      if (user) {
-        try {
-          const funds = await getHeldFunds();
-          setHeldFunds(funds);
-        } catch {
-          setHeldFunds([]);
-        }
-
-        try {
-          const summaries = await getAllocationFundSummaries(
-            user.id,
-            computed.map((c) => ({ id: c.id, category: c.category, amount: c.amount })),
-            dateOpts
-          );
-          setAllocationFundSummaries(summaries);
-        } catch {
-          setAllocationFundSummaries([]);
-        }
-      }
-
-      // Init and fetch monthly bills - always for the CURRENT month
-      // Bills are a to-do checklist, not historical data, so they
-      // should not change when the date filter changes.
-      // Only init bills if the user has saved at least one pay period
-      // (prevents new users from seeing bills before they've used the app).
+      // STAGE 3: Fetch allocations-dependent fund summaries and bills
       const currentMonth = (() => {
         const now = new Date();
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       })();
-      const hasAnyPeriods = await getPayPeriods(1);
-      setHasPeriods(hasAnyPeriods.length > 0);
-      if (user && computed.length > 0 && hasAnyPeriods.length > 0) {
-        const allocationsWithIds = computed.map((a) => ({
-          id: a.id,
-          amount: a.amount,
-        }));
-        const bills = await initMonthlyBills(user.id, currentMonth, allocationsWithIds);
+
+      const [summaries, bills] = await Promise.all([
+        user ? getAllocationFundSummaries(
+          user.id,
+          computed.map((c) => ({ id: c.id, category: c.category, amount: c.amount })),
+          dateOpts
+        ).catch(() => []) : Promise.resolve([]),
+        user && computed.length > 0 && hasPeriodsVal ? initMonthlyBills(
+          user.id,
+          currentMonth,
+          computed.map((a) => ({ id: a.id, amount: a.amount }))
+        ).catch(() => []) : Promise.resolve([])
+      ]);
+
+      setAllocationFundSummaries(summaries);
+      if (user && computed.length > 0 && hasPeriodsVal) {
         setBillPayments(bills);
       }
+
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load dashboard data';
       toast.error(message);

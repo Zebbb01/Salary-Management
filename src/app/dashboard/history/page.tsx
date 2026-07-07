@@ -1061,13 +1061,17 @@ export default function HistoryPage() {
   const loadConsumableHistory = useCallback(async () => {
     setIsLoadingTab(true);
     try {
-      const user = await getCurrentUser();
-      const config = await getSalaryConfig();
+      const [user, config] = await Promise.all([
+        getCurrentUser().catch(() => null),
+        getSalaryConfig().catch(() => null),
+      ]);
       if (user && config) {
-        await autoSnapshotPreviousMonth(user.id, config.consumable_allowance ?? 4500);
         const now = new Date();
         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        await snapshotConsumableMonth(user.id, currentMonth, config.consumable_allowance ?? 4500);
+        await Promise.all([
+          autoSnapshotPreviousMonth(user.id, config.consumable_allowance ?? 4500).catch(() => null),
+          snapshotConsumableMonth(user.id, currentMonth, config.consumable_allowance ?? 4500).catch(() => null),
+        ]);
       }
       const records = await getConsumableMonthlyRecords(
         dateRange ? { dateFrom: dateRange.from, dateTo: dateRange.to } : undefined
