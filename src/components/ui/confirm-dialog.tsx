@@ -39,6 +39,8 @@ interface ConfirmDialogProps {
   onConfirm: () => void | Promise<void>;
   /** Whether the dialog is disabled (won't open) */
   disabled?: boolean;
+  /** Custom class for the trigger span wrapper */
+  className?: string;
 }
 
 const variantConfig: Record<
@@ -89,6 +91,7 @@ export function ConfirmDialog({
   variant: variantProp,
   onConfirm,
   disabled = false,
+  className,
 }: ConfirmDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
@@ -112,7 +115,7 @@ export function ConfirmDialog({
       <span
         role="button"
         tabIndex={-1}
-        className="inline-flex"
+        className={cn("inline-flex", className)}
         onClick={(e) => {
           e.stopPropagation();
           if (!disabled) setOpen(true);

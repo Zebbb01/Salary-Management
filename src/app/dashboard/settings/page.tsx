@@ -21,6 +21,11 @@ import {
   Tag,
   ChevronDown,
   Info,
+  Download,
+  Upload,
+  Database,
+  FileSpreadsheet,
+  FileJson,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -30,6 +35,9 @@ import type {
   AllocationType,
   AllocationClassification,
   PayFrequency,
+  PayPeriod,
+  SpareTransaction,
+  ConsumableExpense,
 } from '@/features/salary/types/salary.types';
 import {
   getSalaryConfig,
@@ -45,6 +53,13 @@ import {
   updateAllocationType,
   deleteAllocationType,
   seedDefaultAllocationTypes,
+  exportAllDataAsJson,
+  restoreAllDataFromJson,
+  importSpareTransactions,
+  importConsumableExpenses,
+  getAllPayPeriods,
+  getAllSpareTransactions,
+  getAllConsumableExpenses,
 } from '@/features/salary/services/salary.service';
 import {
   formatPHP,
@@ -163,6 +178,277 @@ export default function SettingsPage() {
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [isSigningOut, setIsSigningOut] = useState(false);
+
+  // Data Management states
+  const [isExporting, setIsExporting] = useState<Record<string, boolean>>({});
+  const [isImporting, setIsImporting] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [importType, setImportType] = useState<'spare' | 'consumable'>('spare');
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const restoreFileRef = useRef<HTMLInputElement>(null);
+
+  const downloadFile = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPayPeriods = async () => {
+    if (!userId) return;
+    setIsExporting(prev => ({ ...prev, payPeriods: true }));
+    try {
+      const periods = await getAllPayPeriods(userId);
+
+      const headers = ['Period Label', 'Gross Income', 'Total Tax', 'Total Deductions', 'Net Income', 'Total Expenses', 'Total Savings', 'Spare Amount', 'Date Created'];
+      const csvRows = [headers.join(',')];
+
+      for (const p of periods) {
+        const income = Number(p.total_income ?? 0);
+        const tax = Number(p.total_tax ?? 0);
+        const deductions = Number(p.total_deductions ?? 0);
+        const net = income - tax - deductions;
+        const row = [
+          `"${(p.period_label || '').replace(/"/g, '""')}"`,
+          income,
+          tax,
+          deductions,
+          net,
+          Number(p.total_expenses ?? 0),
+          Number(p.total_savings ?? 0),
+          Number(p.spare_amount ?? 0),
+          p.created_at ? p.created_at.split('T')[0] : '',
+        ];
+        csvRows.push(row.join(','));
+      }
+
+      downloadFile(csvRows.join('\n'), 'pay_periods.csv', 'text/csv');
+      toast.success('Pay periods exported successfully');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to export pay periods');
+    } finally {
+      setIsExporting(prev => ({ ...prev, payPeriods: false }));
+    }
+  };
+
+  const handleExportSpareTransactions = async () => {
+    if (!userId) return;
+    setIsExporting(prev => ({ ...prev, spareTxns: true }));
+    try {
+      const txns = await getAllSpareTransactions(userId);
+
+      const headers = ['Date', 'Description', 'Amount (PHP)'];
+      const csvRows = [headers.join(',')];
+
+      for (const t of txns) {
+        const row = [
+          t.transaction_date,
+          `"${(t.description || '').replace(/"/g, '""')}"`,
+          Number(t.amount ?? 0),
+        ];
+        csvRows.push(row.join(','));
+      }
+
+      downloadFile(csvRows.join('\n'), 'spare_transactions.csv', 'text/csv');
+      toast.success('Spare transactions exported successfully');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to export spare transactions');
+    } finally {
+      setIsExporting(prev => ({ ...prev, spareTxns: false }));
+    }
+  };
+
+  const handleExportConsumableExpenses = async () => {
+    if (!userId) return;
+    setIsExporting(prev => ({ ...prev, consumableExpenses: true }));
+    try {
+      const txns = await getAllConsumableExpenses(userId);
+
+      const headers = ['Date', 'Description', 'Amount (PHP)', 'Month'];
+      const csvRows = [headers.join(',')];
+
+      for (const t of txns) {
+        const row = [
+          t.expense_date,
+          `"${(t.description || '').replace(/"/g, '""')}"`,
+          Number(t.amount ?? 0),
+          t.month,
+        ];
+        csvRows.push(row.join(','));
+      }
+
+      downloadFile(csvRows.join('\n'), 'consumable_expenses.csv', 'text/csv');
+      toast.success('Consumable expenses exported successfully');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to export consumable expenses');
+    } finally {
+      setIsExporting(prev => ({ ...prev, consumableExpenses: false }));
+    }
+  };
+
+  const handleExportBackup = async () => {
+    if (!userId) return;
+    setIsExporting(prev => ({ ...prev, backup: true }));
+    try {
+      const backup = await exportAllDataAsJson(userId);
+      downloadFile(JSON.stringify(backup, null, 2), `salary_dashboard_backup_${new Date().toISOString().split('T')[0]}.json`, 'application/json');
+      toast.success('Database backup downloaded successfully');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to generate backup');
+    } finally {
+      setIsExporting(prev => ({ ...prev, backup: false }));
+    }
+  };
+
+  const parseCSV = (text: string) => {
+    const lines: string[][] = [];
+    let row: string[] = [];
+    let inQuotes = false;
+    let currentVal = '';
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      const nextChar = text[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          currentVal += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        row.push(currentVal.trim());
+        currentVal = '';
+      } else if ((char === '\r' || char === '\n') && !inQuotes) {
+        if (char === '\r' && nextChar === '\n') {
+          i++;
+        }
+        row.push(currentVal.trim());
+        if (row.length > 0 && row.some(cell => cell !== '')) {
+          lines.push(row);
+        }
+        row = [];
+        currentVal = '';
+      } else {
+        currentVal += char;
+      }
+    }
+    if (currentVal || row.length > 0) {
+      row.push(currentVal.trim());
+      if (row.some(cell => cell !== '')) {
+        lines.push(row);
+      }
+    }
+    return lines;
+  };
+
+  const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !userId) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const rows = parseCSV(text);
+
+        if (rows.length < 2) {
+          throw new Error('CSV file is empty or missing headers');
+        }
+
+        const headers = rows[0].map(h => h.toLowerCase());
+        const dateIdx = headers.findIndex(h => h.includes('date'));
+        const descIdx = headers.findIndex(h => h.includes('desc'));
+        const amountIdx = headers.findIndex(h => h.includes('amount') || h.includes('val'));
+
+        if (dateIdx === -1 || descIdx === -1 || amountIdx === -1) {
+          throw new Error('CSV must contain Date, Description, and Amount columns');
+        }
+
+        const parsedRecords = rows.slice(1).map((row, lineNum) => {
+          const dateStr = row[dateIdx];
+          const description = row[descIdx];
+          const amountStr = row[amountIdx]?.replace(/[^\d.-]/g, '');
+
+          if (!dateStr || !description || isNaN(Number(amountStr))) {
+            throw new Error(`Invalid data on row ${lineNum + 2}`);
+          }
+
+          const parsedDate = new Date(dateStr);
+          if (isNaN(parsedDate.getTime())) {
+            throw new Error(`Invalid date format "${dateStr}" on row ${lineNum + 2}`);
+          }
+
+          return {
+            date: dateStr,
+            description,
+            amount: Number(amountStr),
+          };
+        });
+
+        if (importType === 'spare') {
+          const spareData = parsedRecords.map(r => ({
+            transaction_date: r.date,
+            description: r.description,
+            amount: r.amount,
+          }));
+          await importSpareTransactions(userId, spareData);
+          toast.success(`Successfully imported ${spareData.length} spare transactions`);
+        } else {
+          const consumableData = parsedRecords.map(r => ({
+            expense_date: r.date,
+            description: r.description,
+            amount: r.amount,
+          }));
+          await importConsumableExpenses(userId, consumableData);
+          toast.success(`Successfully imported ${consumableData.length} consumable expenses`);
+        }
+
+        if (importFileRef.current) importFileRef.current.value = '';
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to parse CSV file');
+      } finally {
+        setIsImporting(false);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleRestoreBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !userId) return;
+
+    setIsRestoring(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const backup = JSON.parse(text);
+
+        if (!backup || !backup.data || typeof backup.data !== 'object') {
+          throw new Error('Invalid JSON backup structure');
+        }
+
+        await restoreAllDataFromJson(userId, backup);
+        toast.success('Database backup restored successfully!');
+        
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to restore backup');
+      } finally {
+        setIsRestoring(false);
+        if (restoreFileRef.current) restoreFileRef.current.value = '';
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // Computed: total salary
   const totalSalary = salary + partTimeSalary;
@@ -1310,6 +1596,218 @@ export default function SettingsPage() {
       </Card>
 
       {/* ============================================================ */}
+      {/* Data Management                                               */}
+      {/* ============================================================ */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+              <Database className="h-4 w-4 text-primary" />
+            </div>
+            <CardTitle className="flex items-center gap-2">Data Management
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger className="flex animate-none opacity-70 transition-opacity hover:opacity-100 shrink-0">
+                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help shrink-0" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Export your payroll details and import transaction logs
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            </CardTitle>
+          </div>
+          <CardDescription>
+            Import or export your transactions, payrolls, and configurations
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Export Data */}
+          <div>
+            <h4 className="text-sm font-semibold mb-2.5 text-foreground">Export Data</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <Button
+                key="export-payperiods"
+                variant="outline"
+                className="w-full flex items-center justify-start gap-2 h-12 px-3.5 text-xs text-muted-foreground hover:text-foreground border-border/50 bg-muted/20"
+                onClick={handleExportPayPeriods}
+                disabled={isExporting.payPeriods}
+              >
+                {isExporting.payPeriods ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4 text-emerald-500 shrink-0" />
+                )}
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export Pay Periods</p>
+                  <p className="text-[10px] text-muted-foreground">Download .csv log of periods</p>
+                </div>
+              </Button>
+
+              <Button
+                key="export-spare"
+                variant="outline"
+                className="w-full flex items-center justify-start gap-2 h-12 px-3.5 text-xs text-muted-foreground hover:text-foreground border-border/50 bg-muted/20"
+                onClick={handleExportSpareTransactions}
+                disabled={isExporting.spareTxns}
+              >
+                {isExporting.spareTxns ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4 text-amber-500 shrink-0" />
+                )}
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export Spare Spending</p>
+                  <p className="text-[10px] text-muted-foreground">Download .csv log of spare spend</p>
+                </div>
+              </Button>
+
+              <Button
+                key="export-consumable"
+                variant="outline"
+                className="w-full flex items-center justify-start gap-2 h-12 px-3.5 text-xs text-muted-foreground hover:text-foreground border-border/50 bg-muted/20"
+                onClick={handleExportConsumableExpenses}
+                disabled={isExporting.consumableExpenses}
+              >
+                {isExporting.consumableExpenses ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4 text-violet-500 shrink-0" />
+                )}
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Export Consumable Spending</p>
+                  <p className="text-[10px] text-muted-foreground">Download .csv log of allowance spend</p>
+                </div>
+              </Button>
+
+              <Button
+                key="export-json"
+                variant="outline"
+                className="w-full flex items-center justify-start gap-2 h-12 px-3.5 text-xs text-muted-foreground hover:text-foreground border-border/50 bg-muted/20"
+                onClick={handleExportBackup}
+                disabled={isExporting.backup}
+              >
+                {isExporting.backup ? (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                ) : (
+                  <FileJson className="h-4 w-4 text-blue-500 shrink-0" />
+                )}
+                <div className="text-left">
+                  <p className="font-medium text-foreground">Download JSON Backup</p>
+                  <p className="text-[10px] text-muted-foreground">Full database snapshot download</p>
+                </div>
+              </Button>
+            </div>
+          </div>
+
+          <Separator className="bg-border/50" />
+
+          {/* Import Data */}
+          <div>
+            <h4 className="text-sm font-semibold mb-2 text-foreground">Import Transactions (CSV)</h4>
+            <p className="text-xs text-muted-foreground mb-4 leading-normal">
+              Upload a CSV file containing columns for <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono text-foreground font-semibold">Date</code>, <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono text-foreground font-semibold">Description</code>, and <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono text-foreground font-semibold">Amount</code>.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3 items-end">
+              <div className="flex-1 w-full space-y-1.5">
+                <Label className="text-xs text-muted-foreground font-semibold">Import Destination</Label>
+                <div className="relative">
+                  <select
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 appearance-none pr-8 text-foreground"
+                    value={importType}
+                    onChange={(e) => setImportType(e.target.value as 'spare' | 'consumable')}
+                  >
+                    <option value="spare" className="bg-background text-foreground">Spare Transactions (linked by period date)</option>
+                    <option value="consumable" className="bg-background text-foreground">Consumable Monthly Expenses (linked by month)</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-muted-foreground">
+                    <ChevronDown className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full sm:w-auto shrink-0">
+                <input
+                  type="file"
+                  ref={importFileRef}
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleImportCSV}
+                />
+                <Button
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={isImporting}
+                  className="w-full flex items-center justify-center gap-2 h-9 px-4 text-xs font-semibold"
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4" />
+                      Select CSV & Import
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <Separator className="bg-border/50" />
+
+          {/* Database Recovery */}
+          <div>
+            <h4 className="text-sm font-semibold mb-1 text-foreground">Database Recovery</h4>
+            <p className="text-xs text-muted-foreground mb-4 leading-normal">
+              Restore your complete salary dashboard account profile using a previously downloaded JSON backup file.
+            </p>
+
+            <input
+              type="file"
+              ref={restoreFileRef}
+              accept=".json"
+              className="hidden"
+              onChange={handleRestoreBackup}
+            />
+
+            <ConfirmDialog
+              title="Restore Database Backup"
+              description="WARNING: Restoring a backup will permanently delete all your current salary configurations, budget allocations, transactions, and borrowing histories and replace them with the backup data. This action cannot be undone. Are you sure you want to proceed?"
+              confirmLabel="Yes, Proceed"
+              cancelLabel="Cancel"
+              variant="destructive"
+              onConfirm={() => {
+                restoreFileRef.current?.click();
+              }}
+              className="w-full"
+              trigger={
+                <Button
+                  variant="outline"
+                  className="w-full flex items-center justify-center gap-2 border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-400 text-rose-500/80 h-9 text-xs font-semibold bg-rose-500/5"
+                  disabled={isRestoring}
+                >
+                  {isRestoring ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Restoring...
+                    </>
+                  ) : (
+                    <>
+                      <Database className="h-4 w-4" />
+                      Restore JSON Backup
+                    </>
+                  )}
+                </Button>
+              }
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ============================================================ */}
       {/* Account                                                       */}
       {/* ============================================================ */}
       <Card>
@@ -1345,25 +1843,35 @@ export default function SettingsPage() {
             </div>
           )}
           <Separator />
-          <Button
+          <ConfirmDialog
+            title="Sign Out"
+            description="Are you sure you want to sign out of your account?"
+            confirmLabel="Sign Out"
+            cancelLabel="Cancel"
             variant="destructive"
-            onClick={handleSignOut}
-            disabled={isSigningOut}
+            onConfirm={handleSignOut}
             className="w-full"
-            size="lg"
-          >
-            {isSigningOut ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Signing out...
-              </>
-            ) : (
-              <>
-                <LogOut className="h-4 w-4" />
-                Sign Out
-              </>
-            )}
-          </Button>
+            trigger={
+              <Button
+                variant="destructive"
+                className="w-full"
+                size="lg"
+                disabled={isSigningOut}
+              >
+                {isSigningOut ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Signing out...
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="h-4 w-4" />
+                    Sign Out
+                  </>
+                )}
+              </Button>
+            }
+          />
         </CardContent>
       </Card>
         </TabsContent>

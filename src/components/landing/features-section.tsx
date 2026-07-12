@@ -9,6 +9,8 @@ import {
   History,
   Wallet,
   Check,
+  HandCoins,
+  Coins,
 } from 'lucide-react';
 import { useRef, useEffect } from 'react';
 
@@ -266,6 +268,62 @@ function SpareTrackerVisual() {
   );
 }
 
+function BorrowingVisual() {
+  return (
+    <div className="space-y-1.5">
+      {[
+        { name: 'Lent to Alice (Lunch)', amount: 'PHP 450.00', type: 'lent', status: 'Active' },
+        { name: 'Borrowed from Bob', amount: 'PHP 2,500.00', type: 'borrowed', status: 'Settled' },
+      ].map((row, i) => (
+        <motion.div
+          key={row.name}
+          initial={{ opacity: 0, x: -12 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.4 + i * 0.1, duration: 0.4 }}
+          className="flex items-center justify-between rounded-lg bg-white/[0.02] border border-white/[0.04] px-2.5 py-1.5"
+        >
+          <div className="min-w-0 flex-1 pr-2">
+            <span className="text-[9px] text-muted-foreground/60 block truncate">{row.name}</span>
+            <span className="text-[8px] text-muted-foreground/30 capitalize">{row.type}</span>
+          </div>
+          <div className="text-right shrink-0">
+            <span className="text-[9px] font-mono font-medium block text-foreground">{row.amount}</span>
+            <span className={`text-[8px] font-medium px-1 rounded-sm ${row.status === 'Active' ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+              {row.status}
+            </span>
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+function ConsumableBudgetVisual() {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-[9px] text-muted-foreground/60">
+        <span>Consumable Remaining</span>
+        <span className="font-mono text-emerald-400 font-bold">PHP 1,250 / 4,500</span>
+      </div>
+      {/* Progress bar */}
+      <div className="h-2 w-full bg-white/[0.03] border border-white/[0.04] rounded-full overflow-hidden">
+        <motion.div
+          initial={{ width: 0 }}
+          whileInView={{ width: '72%' }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.8, delay: 0.3 }}
+          className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full"
+        />
+      </div>
+      <div className="flex justify-between items-center text-[8px] text-muted-foreground/30">
+        <span>72% Spent</span>
+        <span>Rollover active</span>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------------------------
    Feature definitions
    ------------------------------------------------ */
@@ -323,6 +381,24 @@ const features = [
     glowColor: 'cyan',
     accentRgb: '6, 182, 212',
     visual: SpareTrackerVisual,
+  },
+  {
+    icon: HandCoins,
+    title: 'Borrowing & Debt',
+    description: 'Track money borrowed or lent. Manage active debts, link them to allocations, and settle or gift them easily.',
+    gradient: 'from-rose-500 to-pink-400',
+    glowColor: 'rose',
+    accentRgb: '244, 63, 94',
+    visual: BorrowingVisual,
+  },
+  {
+    icon: Coins,
+    title: 'Consumable Budget',
+    description: 'Manage monthly allowances for daily expenses, track limits, and enable automatic rollover of savings.',
+    gradient: 'from-emerald-500 to-teal-400',
+    glowColor: 'emerald',
+    accentRgb: '16, 185, 129',
+    visual: ConsumableBudgetVisual,
   },
 ];
 

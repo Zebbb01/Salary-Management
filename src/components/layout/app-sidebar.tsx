@@ -14,6 +14,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -76,17 +77,27 @@ export function AppSidebar() {
       {/* Sign Out */}
       <Separator />
       <div className="p-3">
-        <button
-          onClick={handleSignOut}
-          className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium',
-            'text-muted-foreground transition-colors duration-150',
-            'hover:bg-destructive/10 hover:text-destructive'
-          )}
-        >
-          <LogOut className="size-4 shrink-0" />
-          Sign Out
-        </button>
+        <ConfirmDialog
+          title="Sign Out"
+          description="Are you sure you want to sign out of your account?"
+          confirmLabel="Sign Out"
+          cancelLabel="Cancel"
+          variant="destructive"
+          onConfirm={handleSignOut}
+          className="w-full"
+          trigger={
+            <button
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium',
+                'text-muted-foreground transition-colors duration-150',
+                'hover:bg-destructive/10 hover:text-destructive'
+              )}
+            >
+              <LogOut className="size-4 shrink-0" />
+              Sign Out
+            </button>
+          }
+        />
       </div>
     </aside>
   );

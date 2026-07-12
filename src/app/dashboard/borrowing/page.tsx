@@ -702,6 +702,7 @@ export default function BorrowingPage() {
           icon={ArrowDownLeft}
           colorTheme="rose"
           subtitle="Total borrowed from others"
+          tooltip="Sum of all outstanding (unsettled) borrowed debts."
         />
         <SummaryCard
           label="Owed To Me"
@@ -709,6 +710,7 @@ export default function BorrowingPage() {
           icon={ArrowUpRight}
           colorTheme="emerald"
           subtitle="Total lent to others"
+          tooltip="Sum of all outstanding (unsettled) lent debts."
         />
         <SummaryCard
           label="Net Position"
@@ -722,6 +724,19 @@ export default function BorrowingPage() {
                 ? 'You owe others more'
                 : 'All balanced'
           }
+          tooltip={
+            <div className="space-y-1">
+              <p className="font-semibold mb-1">Calculation Breakdown:</p>
+              <div className="grid grid-cols-[1fr_auto] gap-x-4 text-[10px]">
+                <span className="text-muted-foreground">Owed to Me (Lent):</span>
+                <span className="text-emerald-500 font-medium">PHP {formatPHP(summary.totalLent)}</span>
+                <span className="text-muted-foreground">I Owe (Borrowed):</span>
+                <span className="text-rose-500 font-medium">- PHP {formatPHP(summary.totalBorrowed)}</span>
+                <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">Net Position:</span>
+                <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">PHP {formatPHP(summary.netPosition)}</span>
+              </div>
+            </div>
+          }
         />
         <SummaryCard
           label="Forgiven / Gifted"
@@ -731,6 +746,37 @@ export default function BorrowingPage() {
           icon={Gift}
           colorTheme="amber"
           subtitle="Written off or received as gifts"
+          tooltip={
+            <div className="space-y-1">
+              <p className="font-semibold mb-1">Calculation Breakdown:</p>
+              <div className="grid grid-cols-[1fr_auto] gap-x-4 text-[10px]">
+                <span className="text-muted-foreground">Gifted to you (Borrowed):</span>
+                <span className="text-emerald-500 font-medium">
+                  PHP {formatPHP(
+                    settledBorrowings
+                      .filter((b) => b.is_gifted && b.type === 'borrowed')
+                      .reduce((sum, b) => sum + Number(b.amount), 0)
+                  )}
+                </span>
+                <span className="text-muted-foreground">Gifted to others (Lent):</span>
+                <span className="text-rose-500 font-medium">
+                  PHP {formatPHP(
+                    settledBorrowings
+                      .filter((b) => b.is_gifted && b.type === 'lent')
+                      .reduce((sum, b) => sum + Number(b.amount), 0)
+                  )}
+                </span>
+                <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">Total Forgiven:</span>
+                <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">
+                  PHP {formatPHP(
+                    settledBorrowings
+                      .filter((b) => b.is_gifted)
+                      .reduce((sum, b) => sum + Number(b.amount), 0)
+                  )}
+                </span>
+              </div>
+            </div>
+          }
         />
       </motion.div>
 

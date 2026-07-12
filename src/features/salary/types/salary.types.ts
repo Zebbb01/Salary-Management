@@ -211,6 +211,8 @@ export interface FinancialSummary {
   totalConsumableSpent: number;
   giftedIncome: number;
   forgivenLent: number;
+  totalSavings: number;
+  totalDeductions: number;
 }
 
 // Borrowing / Lending record

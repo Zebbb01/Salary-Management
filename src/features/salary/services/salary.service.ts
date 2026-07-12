@@ -252,6 +252,117 @@ export async function seedDefaultAllocationTypes(userId: string): Promise<Alloca
 // PAY PERIODS
 // ============================================
 
+async function adjustSavingsForPeriods<
+  T extends {
+    id: string;
+    created_at?: string;
+    total_savings?: number | null;
+    allocation_amounts?: any;
+  }
+>(periods: T[]): Promise<T[]> {
+  if (periods.length === 0) return [];
+  const supabase = createClient();
+
+  // 1. Fetch allocations and types to map classification
+  const [allocationsRes, typesRes] = await Promise.all([
+    supabase.from('budget_allocations').select('id, allocation_type_id'),
+    supabase.from('allocation_types').select('id, classification')
+  ]);
+
+  const allocationClassificationMap = new Map<string, string>();
+  if (allocationsRes.data && typesRes.data) {
+    const typeMap = new Map(typesRes.data.map((t) => [t.id, t.classification]));
+    for (const alloc of allocationsRes.data) {
+      if (alloc.allocation_type_id) {
+        const classification = typeMap.get(alloc.allocation_type_id);
+        if (classification) {
+          allocationClassificationMap.set(alloc.id, classification);
+        }
+      }
+    }
+  }
+
+  // 2. Fetch all allocation expenses
+  const { data: aeData } = await supabase
+    .from('allocation_expenses')
+    .select('amount, allocation_id, held_fund_id, borrowing_id, expense_date');
+
+  // Sort periods chronologically to determine boundaries
+  const sortedPeriods = [...periods].sort((a, b) => 
+    new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+  );
+
+  const spentAssetsByPeriod = new Map<string, number>();
+  const spentAssetsByAllocAndPeriod = new Map<string, Map<string, number>>();
+
+  if (aeData && aeData.length > 0 && sortedPeriods.length > 0) {
+    for (const exp of aeData) {
+      const expTime = new Date(exp.expense_date).getTime();
+      
+      let matchedPeriodId: string | null = null;
+      for (let i = 0; i < sortedPeriods.length; i++) {
+        const pStart = new Date(sortedPeriods[i].created_at!).getTime();
+        const pEnd = i + 1 < sortedPeriods.length ? new Date(sortedPeriods[i + 1].created_at!).getTime() : Infinity;
+        
+        if (expTime >= pStart && expTime < pEnd) {
+          matchedPeriodId = sortedPeriods[i].id;
+          break;
+        }
+      }
+      
+      if (!matchedPeriodId && sortedPeriods.length > 0) {
+        matchedPeriodId = sortedPeriods[0].id;
+      }
+      
+      if (matchedPeriodId) {
+        const isAsset = allocationClassificationMap.get(exp.allocation_id) === 'asset';
+        if (isAsset) {
+          if (exp.held_fund_id && !exp.borrowing_id) {
+            continue; // Skip paid by held fund
+          }
+          const amt = Number(exp.amount ?? 0);
+          
+          spentAssetsByPeriod.set(
+            matchedPeriodId,
+            (spentAssetsByPeriod.get(matchedPeriodId) ?? 0) + amt
+          );
+          
+          const allocMap = spentAssetsByAllocAndPeriod.get(matchedPeriodId) ?? new Map<string, number>();
+          allocMap.set(
+            exp.allocation_id,
+            (allocMap.get(exp.allocation_id) ?? 0) + amt
+          );
+          spentAssetsByAllocAndPeriod.set(matchedPeriodId, allocMap);
+        }
+      }
+    }
+  }
+
+  return periods.map((p) => {
+    const spentSavings = spentAssetsByPeriod.get(p.id) ?? 0;
+    const newTotalSavings = Math.max(0, Number(p.total_savings ?? 0) - spentSavings);
+    
+    const allocAmounts = (p.allocation_amounts ?? []) as any[];
+    const updatedAllocAmounts = allocAmounts.map((item) => {
+      const allocId = item.allocation_id;
+      if (allocId && item.allocation_type === 'asset') {
+        const allocSpent = spentAssetsByAllocAndPeriod.get(p.id)?.get(allocId) ?? 0;
+        return {
+          ...item,
+          actual: Math.max(0, Number(item.actual ?? 0) - allocSpent)
+        };
+      }
+      return item;
+    });
+    
+    return {
+      ...p,
+      total_savings: newTotalSavings,
+      allocation_amounts: updatedAllocAmounts
+    };
+  });
+}
+
 export async function getPayPeriods(limit = 20): Promise<PayPeriod[]> {
   const { data, error } = await supabase
     .from('pay_periods')
@@ -260,7 +371,8 @@ export async function getPayPeriods(limit = 20): Promise<PayPeriod[]> {
     .limit(limit);
 
   if (error) throw error;
-  return data ?? [];
+  const periods = data ?? [];
+  return adjustSavingsForPeriods(periods);
 }
 
 export async function getPayPeriod(id: string): Promise<PayPeriod | null> {
@@ -604,7 +716,19 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     .from('allocation_types')
     .select('id, classification');
 
-  // Run all 8 queries concurrently
+  // 9. Build allocation_expenses query
+  let aeQuery = supabase
+    .from('allocation_expenses')
+    .select('amount, allocation_id, held_fund_id, borrowing_id, expense_date');
+
+  if (opts?.dateFrom) {
+    aeQuery = aeQuery.gte('expense_date', opts.dateFrom.substring(0, 10));
+  }
+  if (opts?.dateTo) {
+    aeQuery = aeQuery.lte('expense_date', opts.dateTo.substring(0, 10));
+  }
+
+  // Run all 9 queries concurrently
   const [
     allocationsRes,
     typesRes,
@@ -613,7 +737,8 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     activeBorrowingRes,
     beRes,
     giftedRes,
-    cRes
+    cRes,
+    aeRes
   ] = await Promise.all([
     allocationsQuery,
     typesQuery,
@@ -622,7 +747,8 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     activeBorrowingQuery,
     beQuery,
     gQuery,
-    cQuery
+    cQuery,
+    aeQuery
   ]);
 
   if (periodsRes.error) throw periodsRes.error;
@@ -635,6 +761,7 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
   const expData = beRes.data ?? [];
   const giftedData = giftedRes.data ?? [];
   const cData = cRes.data ?? [];
+  const aeData = aeRes.data ?? [];
 
   const grossIncome = periods.reduce((s, p) => s + Number(p.total_income ?? 0), 0);
   const totalTax = periods.reduce((s, p) => s + Number(p.total_tax ?? 0), 0);
@@ -713,6 +840,24 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     }
   }
 
+  // Fetch asset expenses from aeData to deduct from totalAssets
+  let totalAssetExpensesSpent = 0;
+  for (const ae of aeData) {
+    const type = allocationClassificationMap.get(ae.allocation_id);
+    if (type === 'asset') {
+      if (ae.held_fund_id && !ae.borrowing_id) {
+        continue;
+      }
+      totalAssetExpensesSpent += Number(ae.amount ?? 0);
+    }
+  }
+
+  // Store the original allocated savings total (total assets before deduction of expenses)
+  const totalSavings = totalAssets;
+
+  // Adjust totalAssets to be remaining balance
+  totalAssets = Math.max(0, totalAssets - totalAssetExpensesSpent);
+
   // Fetch active (unsettled) borrowing totals for outstanding debt display
   let totalBorrowed = 0;
   let totalLent = 0;
@@ -761,11 +906,14 @@ export async function getFinancialSummary(opts?: { dateFrom?: string; dateTo?: s
     totalConsumableSpent,
     giftedIncome,
     forgivenLent,
+    totalSavings,
+    totalDeductions,
   };
 }
 
 export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; dateTo?: string }): Promise<{
   label: string;
+  fullLabel: string;
   income: number;
   netPay: number;
   expenses: number;
@@ -777,7 +925,7 @@ export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; d
   // the most recent N periods within the date range, not the oldest N globally.
   let query = supabase
     .from('pay_periods')
-    .select('id, period_label, total_income, total_expenses, total_savings, total_tax, total_deductions, spare_amount');
+    .select('id, period_label, total_income, total_expenses, total_savings, total_tax, total_deductions, spare_amount, allocation_amounts, created_at');
 
   // Apply date filters first so the limit applies to the filtered set
   if (opts?.dateFrom) query = query.gte('created_at', opts.dateFrom);
@@ -791,10 +939,11 @@ export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; d
   if (error) throw error;
 
   const periods = data ?? [];
+  const adjustedPeriods = await adjustSavingsForPeriods(periods);
 
   // Fetch spare transactions for these periods so we can include them in expenses
   const spareSpentByPeriod = new Map<string, number>();
-  const pIds = periods.map((p) => p.id).filter(Boolean);
+  const pIds = adjustedPeriods.map((p) => p.id).filter(Boolean);
   if (pIds.length > 0) {
     const { data: spareData, error: spareError } = await supabase
       .from('spare_transactions')
@@ -815,12 +964,38 @@ export async function getPayPeriodTrend(limit = 6, opts?: { dateFrom?: string; d
   }
 
   // Reverse to chronological order (ascending) for chart display
-  return periods.reverse().map((p) => {
+  return adjustedPeriods.reverse().map((p) => {
     const income = Number(p.total_income ?? 0);
     const tax = Number(p.total_tax ?? 0);
     const deductions = Number(p.total_deductions ?? 0);
+
+    const parts = p.period_label?.split(' - ') ?? [];
+    const monthYear = parts[0] ?? '';
+    const wageType = parts[1] ?? '';
+
+    let cleanLabel = monthYear;
+    if (wageType) {
+      const shortWage = wageType
+        .replace('First Wage', 'W1')
+        .replace('Second Wage', 'W2')
+        .replace('Untracked Balance', 'Untracked');
+      
+      const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const monthAbbrs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      let shortenedMonthYear = monthYear;
+      for (let i = 0; i < monthNames.length; i++) {
+        if (shortenedMonthYear.startsWith(monthNames[i])) {
+          shortenedMonthYear = shortenedMonthYear.replace(monthNames[i], monthAbbrs[i]);
+          break;
+        }
+      }
+      shortenedMonthYear = shortenedMonthYear.replace(/ 20(\d{2})/, " '$1");
+      cleanLabel = `${shortenedMonthYear} (${shortWage})`;
+    }
+
     return {
-      label: p.period_label?.split(' - ')[0] ?? '',
+      label: cleanLabel,
+      fullLabel: p.period_label ?? '',
       income,
       netPay: income - tax - deductions,
       expenses: Number(p.total_expenses ?? 0) + (spareSpentByPeriod.get(p.id) ?? 0),
@@ -1689,4 +1864,233 @@ export async function deleteHeldFund(id: string): Promise<void> {
 
   if (error) throw error;
 }
+
+/** Export all user data as a single JSON structure for backup */
+export async function exportAllDataAsJson(userId: string): Promise<any> {
+  const supabase = createClient();
+  const tables = [
+    'salary_configs',
+    'allocation_types',
+    'budget_allocations',
+    'allocation_expenses',
+    'pay_periods',
+    'spare_transactions',
+    'bill_payments',
+    'borrowings',
+    'borrowing_expenses',
+    'consumable_expenses',
+    'consumable_monthly_records',
+    'held_funds',
+  ];
+
+  const backupData: Record<string, any[]> = {};
+
+  await Promise.all(
+    tables.map(async (table) => {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .eq('user_id', userId);
+      
+      if (error) {
+        backupData[table] = [];
+      } else {
+        backupData[table] = data ?? [];
+      }
+    })
+  );
+
+  return {
+    version: '1.0.0',
+    exported_at: new Date().toISOString(),
+    user_id: userId,
+    data: backupData,
+  };
+}
+
+/** Restore all user data from a JSON backup, clearing existing records first */
+export async function restoreAllDataFromJson(userId: string, backup: any): Promise<void> {
+  const supabase = createClient();
+  if (!backup || !backup.data) {
+    throw new Error('Invalid backup file format');
+  }
+
+  const backupData = backup.data;
+
+  // Safe delete order to respect foreign key constraints (child first)
+  const deleteOrder = [
+    'borrowing_expenses',
+    'allocation_expenses',
+    'bill_payments',
+    'spare_transactions',
+    'borrowings',
+    'budget_allocations',
+    'pay_periods',
+    'held_funds',
+    'consumable_expenses',
+    'consumable_monthly_records',
+    'allocation_types',
+    'salary_configs',
+  ];
+
+  for (const table of deleteOrder) {
+    const { error } = await supabase
+      .from(table)
+      .delete()
+      .eq('user_id', userId);
+    if (error) {
+      console.error(`Error deleting from ${table}:`, error);
+      throw error;
+    }
+  }
+
+  // Safe insert order to respect foreign key constraints (parent first)
+  const insertOrder = [
+    'salary_configs',
+    'allocation_types',
+    'consumable_monthly_records',
+    'consumable_expenses',
+    'held_funds',
+    'pay_periods',
+    'budget_allocations',
+    'borrowings',
+    'spare_transactions',
+    'bill_payments',
+    'allocation_expenses',
+    'borrowing_expenses',
+  ];
+
+  for (const table of insertOrder) {
+    const rows = backupData[table] ?? [];
+    if (rows.length === 0) continue;
+
+    const sanitizedRows = rows.map((row: any) => ({
+      ...row,
+      user_id: userId,
+    }));
+
+    const { error } = await supabase
+      .from(table)
+      .insert(sanitizedRows);
+    
+    if (error) {
+      console.error(`Error inserting into ${table}:`, error);
+      throw error;
+    }
+  }
+}
+
+/** Import spare transactions from parsed CSV records */
+export async function importSpareTransactions(
+  userId: string,
+  txns: { transaction_date: string; description: string; amount: number }[]
+): Promise<void> {
+  const supabase = createClient();
+
+  // Fetch pay periods to align transaction dates
+  const { data: periods, error: periodsError } = await supabase
+    .from('pay_periods')
+    .select('id, period_label, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+
+  if (periodsError) throw periodsError;
+
+  const payPeriods = periods ?? [];
+
+  const findPeriodId = (dateStr: string): string | null => {
+    if (payPeriods.length === 0) return null;
+    let bestPeriod = payPeriods[0];
+    for (const p of payPeriods) {
+      const pDate = p.created_at.split('T')[0];
+      if (pDate <= dateStr) {
+        bestPeriod = p;
+      }
+    }
+    return bestPeriod.id;
+  };
+
+  const rowsToInsert = txns.map((t) => {
+    const matchedPeriodId = findPeriodId(t.transaction_date);
+    return {
+      user_id: userId,
+      pay_period_id: matchedPeriodId,
+      description: t.description,
+      amount: t.amount,
+      transaction_date: t.transaction_date,
+    };
+  });
+
+  if (rowsToInsert.length === 0) return;
+
+  const { error } = await supabase
+    .from('spare_transactions')
+    .insert(rowsToInsert);
+
+  if (error) throw error;
+}
+
+/** Import consumable expenses from parsed CSV records */
+export async function importConsumableExpenses(
+  userId: string,
+  txns: { expense_date: string; description: string; amount: number }[]
+): Promise<void> {
+  const supabase = createClient();
+
+  const rowsToInsert = txns.map((t) => {
+    const month = t.expense_date.substring(0, 7);
+    return {
+      user_id: userId,
+      description: t.description,
+      amount: t.amount,
+      expense_date: t.expense_date,
+      month,
+    };
+  });
+
+  if (rowsToInsert.length === 0) return;
+
+  const { error } = await supabase
+    .from('consumable_expenses')
+    .insert(rowsToInsert);
+
+  if (error) throw error;
+}
+
+/** Get all pay periods for a user (no limit, chronological order) */
+export async function getAllPayPeriods(userId: string): Promise<PayPeriod[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('pay_periods')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Get all spare transactions for a user */
+export async function getAllSpareTransactions(userId: string): Promise<SpareTransaction[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('spare_transactions')
+    .select('*')
+    .eq('user_id', userId)
+    .order('transaction_date', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Get all consumable expenses for a user */
+export async function getAllConsumableExpenses(userId: string): Promise<ConsumableExpense[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from('consumable_expenses')
+    .select('*')
+    .eq('user_id', userId)
+    .order('expense_date', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
 

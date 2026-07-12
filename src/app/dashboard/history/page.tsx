@@ -488,7 +488,7 @@ function SpareChartTooltip({
   label,
 }: {
   active?: boolean;
-  payload?: { value: number; dataKey: string; color: string }[];
+  payload?: any[];
   label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -523,12 +523,13 @@ function SpareChartTooltip({
 
   if (!active || !payload?.length) return null;
   const value = payload[0].value ?? 0;
+  const fullLabel = payload[0]?.payload?.fullLabel ?? label;
 
   return (
     <div ref={ref}>
       <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
         <CardContent className="px-3.5 py-3">
-          <p className="text-sm font-semibold text-foreground mb-2">{label}</p>
+          <p className="text-sm font-semibold text-foreground mb-2">{fullLabel}</p>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-6 text-xs">
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -551,12 +552,37 @@ function SpareChartTooltip({
 function SpareAmountChart({ periods, isMobile }: { periods: PayPeriod[]; isMobile: boolean }) {
   const chartData = [...periods]
     .reverse()
-    .map((p) => ({
-      period: p.period_label.length > 14
-        ? p.period_label.slice(0, 14) + '...'
-        : p.period_label,
-      spare: p.spare_amount ?? 0,
-    }));
+    .map((p) => {
+      const parts = p.period_label.split(' - ') ?? [];
+      const monthYear = parts[0] ?? '';
+      const wageType = parts[1] ?? '';
+
+      let cleanLabel = monthYear;
+      if (wageType) {
+        const shortWage = wageType
+          .replace('First Wage', 'W1')
+          .replace('Second Wage', 'W2')
+          .replace('Untracked Balance', 'Untracked');
+        
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const monthAbbrs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        let shortenedMonthYear = monthYear;
+        for (let i = 0; i < monthNames.length; i++) {
+          if (shortenedMonthYear.startsWith(monthNames[i])) {
+            shortenedMonthYear = shortenedMonthYear.replace(monthNames[i], monthAbbrs[i]);
+            break;
+          }
+        }
+        shortenedMonthYear = shortenedMonthYear.replace(/ 20(\d{2})/, " '$1");
+        cleanLabel = `${shortenedMonthYear} (${shortWage})`;
+      }
+
+      return {
+        period: cleanLabel,
+        fullLabel: p.period_label,
+        spare: p.spare_amount ?? 0,
+      };
+    });
 
   if (chartData.length < 2) return null;
 
@@ -803,7 +829,7 @@ function IncomeExpensesChartTooltip({
   label,
 }: {
   active?: boolean;
-  payload?: { value: number; dataKey: string; color: string; name: string }[];
+  payload?: any[];
   label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -830,12 +856,13 @@ function IncomeExpensesChartTooltip({
   });
 
   if (!active || !payload?.length) return null;
+  const fullLabel = payload[0]?.payload?.fullLabel ?? label;
 
   return (
     <div ref={ref}>
       <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
         <CardContent className="px-3.5 py-3">
-          <p className="text-sm font-semibold text-foreground mb-2">{label}</p>
+          <p className="text-sm font-semibold text-foreground mb-2">{fullLabel}</p>
           <div className="space-y-1.5">
             {payload.map((entry, idx) => (
               <div key={idx} className="flex items-center justify-between gap-6 text-xs">
@@ -861,13 +888,38 @@ function IncomeExpensesChartTooltip({
 function IncomeExpensesChart({ periods, isMobile }: { periods: PayPeriod[]; isMobile: boolean }) {
   const chartData = [...periods]
     .reverse()
-    .map((p) => ({
-      period: p.period_label.length > 14
-        ? p.period_label.slice(0, 14) + '...'
-        : p.period_label,
-      income: (p.total_income ?? 0) - (p.total_tax ?? 0) - (p.total_deductions ?? 0),
-      expenses: p.total_expenses ?? 0,
-    }));
+    .map((p) => {
+      const parts = p.period_label.split(' - ') ?? [];
+      const monthYear = parts[0] ?? '';
+      const wageType = parts[1] ?? '';
+
+      let cleanLabel = monthYear;
+      if (wageType) {
+        const shortWage = wageType
+          .replace('First Wage', 'W1')
+          .replace('Second Wage', 'W2')
+          .replace('Untracked Balance', 'Untracked');
+        
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const monthAbbrs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        let shortenedMonthYear = monthYear;
+        for (let i = 0; i < monthNames.length; i++) {
+          if (shortenedMonthYear.startsWith(monthNames[i])) {
+            shortenedMonthYear = shortenedMonthYear.replace(monthNames[i], monthAbbrs[i]);
+            break;
+          }
+        }
+        shortenedMonthYear = shortenedMonthYear.replace(/ 20(\d{2})/, " '$1");
+        cleanLabel = `${shortenedMonthYear} (${shortWage})`;
+      }
+
+      return {
+        period: cleanLabel,
+        fullLabel: p.period_label,
+        income: (p.total_income ?? 0) - (p.total_tax ?? 0) - (p.total_deductions ?? 0),
+        expenses: p.total_expenses ?? 0,
+      };
+    });
 
   if (chartData.length < 2) return null;
 
@@ -2077,7 +2129,19 @@ export default function HistoryPage() {
                   value={aggregates.totalSpending}
                   icon={ShoppingBag}
                   colorTheme="orange"
-                  tooltip="Total Expenses + Total Savings + Spare Spent for the filtered periods."
+                  tooltip={
+                    <div className="space-y-1">
+                      <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                      <div className="grid grid-cols-[1fr_auto] gap-x-4 text-[10px]">
+                        <span className="text-muted-foreground">Fixed Expenses:</span>
+                        <span className="font-medium">PHP {formatPHP(aggregates.totalExpenses)}</span>
+                        <span className="text-muted-foreground">Total Savings:</span>
+                        <span className="font-medium">+ PHP {formatPHP(aggregates.totalSavings)}</span>
+                        <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">Total Spending:</span>
+                        <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">PHP {formatPHP(aggregates.totalSpending)}</span>
+                      </div>
+                    </div>
+                  }
                 />
 
                 <HistoryStatCard
@@ -2085,7 +2149,19 @@ export default function HistoryPage() {
                   value={aggregates.totalExpenses}
                   icon={Receipt}
                   colorTheme="rose"
-                  tooltip="Budget Expenses + Spare Spent for the filtered periods. Matches Dashboard logic."
+                  tooltip={
+                    <div className="space-y-1">
+                      <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                      <div className="grid grid-cols-[1fr_auto] gap-x-4 text-[10px]">
+                        <span className="text-muted-foreground">Budget Expenses:</span>
+                        <span className="font-medium">PHP {formatPHP(filteredPeriods.reduce((sum, p) => sum + Number(p.total_expenses ?? 0), 0))}</span>
+                        <span className="text-muted-foreground">Spare Spent:</span>
+                        <span className="font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
+                        <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">Total Expenses:</span>
+                        <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">PHP {formatPHP(aggregates.totalExpenses)}</span>
+                      </div>
+                    </div>
+                  }
                 />
 
                 <HistoryStatCard
@@ -2102,7 +2178,19 @@ export default function HistoryPage() {
                     value={aggregates.remainingSpare}
                     icon={Wallet}
                     colorTheme={aggregates.remainingSpare >= 0 ? "sky" : "rose"}
-                    tooltip={`Total Allocated Spare (${formatPHP(aggregates.totalSpareAllocated)}) minus Total Spare Spent (${formatPHP(totalSpareSpent)}).`}
+                    tooltip={
+                      <div className="space-y-1">
+                        <p className="font-semibold mb-1">Calculation Breakdown:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4 text-[10px]">
+                          <span className="text-muted-foreground">Allocated Spare:</span>
+                          <span className="font-medium">PHP {formatPHP(aggregates.totalSpareAllocated)}</span>
+                          <span className="text-rose-500 font-medium">Spare Spent:</span>
+                          <span className="text-rose-500 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
+                          <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">Remaining Spare:</span>
+                          <span className="text-white font-bold border-t border-white/10 pt-0.5 mt-0.5">PHP {formatPHP(aggregates.remainingSpare)}</span>
+                        </div>
+                      </div>
+                    }
                   />
                 </div>
               </div>

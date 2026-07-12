@@ -579,6 +579,16 @@ interface TrendPayloadItem {
   value: number;
   color: string;
   dataKey: string;
+  payload?: {
+    label: string;
+    fullLabel?: string;
+    income: number;
+    netPay: number;
+    expenses: number;
+    spare: number;
+    tax: number;
+    savings: number;
+  };
 }
 
 function TrendChartTooltip({
@@ -626,12 +636,13 @@ function TrendChartTooltip({
   const expenses = payload.find((p) => p.dataKey === 'expenses')?.value ?? 0;
   const net = income - expenses;
   const showNet = payload.some(p => p.dataKey === 'income') && payload.some(p => p.dataKey === 'expenses');
+  const fullLabel = payload[0]?.payload?.fullLabel ?? label;
 
   return (
     <div ref={ref}>
       <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
         <CardContent className="px-3.5 py-3">
-          <p className="text-sm font-semibold text-foreground mb-2">{label}</p>
+          <p className="text-sm font-semibold text-foreground mb-2">{fullLabel}</p>
           <div className="space-y-1.5">
             {payload.map((entry) => (
               <div key={entry.dataKey} className="flex items-center justify-between gap-6 text-xs">
@@ -859,10 +870,14 @@ export default function DashboardPage() {
 
   // New state
   const [billPayments, setBillPayments] = useState<BillPayment[]>([]);
+  const [activeBillMonth, setActiveBillMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary | null>(null);
   const [allTimeFinancialSummary, setAllTimeFinancialSummary] = useState<FinancialSummary | null>(null);
   const [startingBalanceSummary, setStartingBalanceSummary] = useState<FinancialSummary | null>(null);
-  const [trendData, setTrendData] = useState<{ label: string; income: number; netPay: number; expenses: number; spare: number; tax: number; savings: number }[]>([]);
+  const [trendData, setTrendData] = useState<{ label: string; fullLabel?: string; income: number; netPay: number; expenses: number; spare: number; tax: number; savings: number }[]>([]);
   const [visibleSeries, setVisibleSeries] = useState<Record<string, boolean>>({
     income: true,
     netPay: true,
@@ -1071,10 +1086,7 @@ export default function DashboardPage() {
       setHeldFunds(funds);
 
       // STAGE 3: Fetch allocations-dependent fund summaries and bills
-      const currentMonth = (() => {
-        const now = new Date();
-        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      })();
+      setActiveBillMonth(billMonth);
 
       const [summaries, bills] = await Promise.all([
         user ? getAllocationFundSummaries(
@@ -1084,7 +1096,7 @@ export default function DashboardPage() {
         ).catch(() => []) : Promise.resolve([]),
         user && computed.length > 0 && hasPeriodsVal ? initMonthlyBills(
           user.id,
-          currentMonth,
+          billMonth,
           computed.map((a) => ({ id: a.id, amount: a.amount }))
         ).catch(() => []) : Promise.resolve([])
       ]);
@@ -1108,11 +1120,7 @@ export default function DashboardPage() {
 
 
 
-  // Bills always use the current month (not the date filter)
-  const activeBillMonth = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  })();
+
 
   // Handle marking a bill as paid
   async function handleMarkBillPaid(bill: BillPayment) {
@@ -1509,6 +1517,17 @@ export default function DashboardPage() {
     return <EmptyState />;
   }
 
+  // Build a map of allocation_type_id -> classification
+  const typeClassificationMap = new Map(
+    allocationTypes.map((t) => [t.id, t.classification])
+  );
+
+  // Helper to get classification for an allocation
+  function getClassification(alloc: BudgetAllocationWithAmount): 'expense' | 'asset' | null {
+    if (!alloc.allocation_type_id) return null;
+    return typeClassificationMap.get(alloc.allocation_type_id) ?? null;
+  }
+
   // Use aggregated financial summary for card values (sums across ALL periods in range)
   // This prevents a spare-only period from zeroing out salary/expense cards
   const fullTimeSalary = financialSummary?.fullTimeSalary ?? 0;
@@ -1519,8 +1538,18 @@ export default function DashboardPage() {
   const taxAmount = financialSummary?.totalTax ?? 0;
   const forgivenLent = financialSummary?.forgivenLent ?? 0;
   const giftedIncome = financialSummary?.giftedIncome ?? 0;
-  
-  const totalExpenses = (financialSummary?.totalExpensesSum ?? 0) + forgivenLent;
+
+  // Calculate additionalExpenseOutflow:
+  const additionalExpenseOutflow = allocations
+    .filter((a) => getClassification(a) === 'expense')
+    .reduce((sum, alloc) => {
+      const bill = billPayments.find((b) => b.allocation_id === alloc.id);
+      const allocated = actualAllocatedMap.get(alloc.id) ?? 0;
+      const paid = Number(bill?.amount ?? 0);
+      return sum + Math.max(0, paid - allocated);
+    }, 0);
+
+  const totalExpenses = (financialSummary?.totalExpensesSum ?? 0) + additionalExpenseOutflow + forgivenLent;
   const displayedTotalExpenses = hasPeriodData
     ? totalExpenses
     : allocations.filter((a) => getClassification(a) === 'expense').reduce((sum, a) => sum + a.amount, 0);
@@ -1538,7 +1567,7 @@ export default function DashboardPage() {
   const totalBorrowingSpent = financialSummary?.totalBorrowingExpensesSpent ?? 0;
 
   const totalOutflow = totalAllocated + totalSpareSpent + totalConsumableSpent + totalBorrowingSpent + forgivenLent;
-  const remainingSpare = spareAmount - totalSpareSpent - totalConsumableSpent - totalBorrowingSpent;
+  const remainingSpare = spareAmount - totalSpareSpent - totalConsumableSpent - totalBorrowingSpent - additionalExpenseOutflow;
 
   // Compute all-time remaining spare (Current Wallet Liquid Cash)
   const allTimeSpareAmount = (allTimeFinancialSummary?.totalSpare ?? 0) + (allTimeFinancialSummary?.giftedIncome ?? 0);
@@ -1556,17 +1585,6 @@ export default function DashboardPage() {
 
   // The ending balance for the filtered period is the starting balance plus the net flow of this period
   const endingBalance = startingBalance + remainingSpare;
-
-  // Build a map of allocation_type_id -> classification
-  const typeClassificationMap = new Map(
-    allocationTypes.map((t) => [t.id, t.classification])
-  );
-
-  // Helper to get classification for an allocation
-  function getClassification(alloc: BudgetAllocationWithAmount): 'expense' | 'asset' | null {
-    if (!alloc.allocation_type_id) return null;
-    return typeClassificationMap.get(alloc.allocation_type_id) ?? null;
-  }
 
   // Filter allocations based on category filter
   const filteredAllocations = categoryFilter === 'all'
@@ -1779,14 +1797,43 @@ export default function DashboardPage() {
               value={startingBalance}
               icon={Wallet}
               colorTheme="sky"
-              tooltip="Carried-over balance up to the start of this period"
+              tooltip={
+                <div className="space-y-1 w-44">
+                  <p className="font-semibold mb-1 text-background">Calculation Breakdown:</p>
+                  <p className="text-background/70 text-[10px] leading-normal mb-1">
+                    Total accumulated spare cash carried over from previous periods:
+                  </p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4 border-t border-background/20 pt-1 mt-1 text-background/90">
+                    <span className="text-background/70">Prev. Spare Cash:</span>
+                    <span className="font-medium">PHP {formatPHP(startingSpareAmount)}</span>
+                    <span className="text-background/70">Prev. Spent:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP((startingBalanceSummary?.totalSpareSpent ?? 0) + (startingBalanceSummary?.totalConsumableSpent ?? 0) + (startingBalanceSummary?.totalBorrowingExpensesSpent ?? 0))}</span>
+                    <span className="font-bold border-t border-background/20 pt-0.5 mt-0.5">Starting Balance:</span>
+                    <span className="font-bold border-t border-background/20 pt-0.5 mt-0.5">PHP {formatPHP(startingBalance)}</span>
+                  </div>
+                </div>
+              }
             />
             <OverviewCard
               label="Net Income"
               value={financialSummary?.netIncome ?? 0}
               icon={DollarSign}
               colorTheme="emerald"
-              tooltip="Gross Income minus Tax and Deductions"
+              tooltip={
+                <div className="space-y-1 w-44">
+                  <p className="font-semibold mb-1 text-background">Calculation Breakdown:</p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4 text-background/90">
+                    <span className="text-background/70">Gross Income:</span>
+                    <span className="font-medium">PHP {formatPHP(financialSummary?.grossIncome ?? 0)}</span>
+                    <span className="text-rose-400 dark:text-rose-600">Taxes:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(financialSummary?.totalTax ?? 0)}</span>
+                    <span className="text-rose-400 dark:text-rose-600">Deductions:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(financialSummary?.totalDeductions ?? 0)}</span>
+                    <span className="text-emerald-400 dark:text-emerald-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">Net Income:</span>
+                    <span className="text-emerald-400 dark:text-emerald-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">PHP {formatPHP(financialSummary?.netIncome ?? 0)}</span>
+                  </div>
+                </div>
+              }
             />
             <OverviewCard
               label="Total Expenditures"
@@ -1795,16 +1842,16 @@ export default function DashboardPage() {
               colorTheme="rose"
               tooltip={
                 <div className="space-y-1 w-44">
-                  <p className="font-semibold mb-1">Calculation Breakdown:</p>
-                  <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                    <span className="text-muted-foreground">Fixed Allocations:</span>
-                    <span className="text-rose-500 font-medium">- PHP {formatPHP(totalAllocated)}</span>
-                    <span className="text-muted-foreground">Spare Spent:</span>
-                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
-                    <span className="text-muted-foreground">Consumables:</span>
-                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
-                    <span className="text-muted-foreground">Borrowing Spent:</span>
-                    <span className="text-rose-500 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
+                  <p className="font-semibold mb-1 text-background">Calculation Breakdown:</p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4 text-background/90">
+                    <span className="text-background/70">Fixed Allocations:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalAllocated)}</span>
+                    <span className="text-background/70">Spare Spent:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">+ PHP {formatPHP(totalSpareSpent)}</span>
+                    <span className="text-background/70">Consumables:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">+ PHP {formatPHP(totalConsumableSpent)}</span>
+                    <span className="text-background/70">Borrowing Spent:</span>
+                    <span className="text-rose-400 dark:text-rose-600 font-medium">+ PHP {formatPHP(totalBorrowingSpent)}</span>
                   </div>
                 </div>
               }
@@ -1822,43 +1869,43 @@ export default function DashboardPage() {
                       </TooltipTrigger>
                       <TooltipContent side="right" className="text-xs">
                         <div className="space-y-1">
-                          <p className="font-semibold mb-1">Calculation Breakdown:</p>
-                          <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                            <span className="text-muted-foreground">Starting Balance:</span>
+                          <p className="font-semibold mb-1 text-background">Calculation Breakdown:</p>
+                          <div className="grid grid-cols-[1fr_auto] gap-x-4 text-background/90">
+                            <span className="text-background/70">Starting Balance:</span>
                             <span className="font-medium">PHP {formatPHP(startingBalance)}</span>
                             
-                            <span className="text-muted-foreground">Budgeted Spare:</span>
+                            <span className="text-background/70">Budgeted Spare:</span>
                             <span className="font-medium">+ PHP {formatPHP(financialSummary?.totalSpare ?? 0)}</span>
                             
                             {giftedIncome > 0 && (
                               <>
-                                <span className="text-emerald-500/80">Gifted/Forgiven Borrowings:</span>
-                                <span className="text-emerald-500 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
+                                <span className="text-emerald-400 dark:text-emerald-600">Gifted/Forgiven Borrowings:</span>
+                                <span className="text-emerald-400 dark:text-emerald-600 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
                               </>
                             )}
                             
-                            <span className="text-muted-foreground">Spent from Spare:</span>
-                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
+                            <span className="text-background/70">Spent from Spare:</span>
+                            <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalSpareSpent)}</span>
                             
-                            <span className="text-muted-foreground">Consumable Spent:</span>
-                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalConsumableSpent)}</span>
+                            <span className="text-background/70">Consumable Spent:</span>
+                            <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalConsumableSpent)}</span>
                             
-                            <span className="text-muted-foreground">Borrowing Spent:</span>
-                            <span className="text-rose-500 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
+                            <span className="text-background/70">Borrowing Spent:</span>
+                            <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalBorrowingSpent)}</span>
                           </div>
                           
                           {(totalBorrowedAmt > 0 || totalLentAmt > 0) && (
-                            <div className="mt-2 pt-2 border-t border-white/10 space-y-1">
-                              <p className="font-semibold text-white/90">True Cash Position:</p>
-                              <div className="grid grid-cols-[1fr_auto] gap-x-4">
-                                <span className="text-muted-foreground">Available Spare:</span>
+                            <div className="mt-2 pt-2 border-t border-background/20 space-y-1">
+                              <p className="font-semibold text-background">True Cash Position:</p>
+                              <div className="grid grid-cols-[1fr_auto] gap-x-4 text-background/90">
+                                <span className="text-background/70">Available Spare:</span>
                                 <span className="font-medium">PHP {formatPHP(endingBalance)}</span>
-                                <span className="text-muted-foreground">Owed to Me (Active):</span>
-                                <span className="text-emerald-400 font-medium">+ PHP {formatPHP(totalLentAmt)}</span>
-                                <span className="text-muted-foreground">I Owe (Active):</span>
-                                <span className="text-rose-400 font-medium">- PHP {formatPHP(totalBorrowedAmt)}</span>
-                                <span className="text-white font-bold mt-0.5 border-t border-white/10 pt-0.5">True Balance:</span>
-                                <span className="text-white font-bold mt-0.5 border-t border-white/10 pt-0.5">PHP {formatPHP(endingBalance + totalLentAmt - totalBorrowedAmt)}</span>
+                                <span className="text-background/70">Owed to Me (Active):</span>
+                                <span className="text-emerald-400 dark:text-emerald-600 font-medium">+ PHP {formatPHP(totalLentAmt)}</span>
+                                <span className="text-background/70">I Owe (Active):</span>
+                                <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalBorrowedAmt)}</span>
+                                <span className="font-bold mt-0.5 border-t border-background/20 pt-0.5">True Balance:</span>
+                                <span className="font-bold mt-0.5 border-t border-background/20 pt-0.5">PHP {formatPHP(endingBalance + totalLentAmt - totalBorrowedAmt)}</span>
                               </div>
                             </div>
                           )}
@@ -1913,24 +1960,158 @@ export default function DashboardPage() {
               {/* Financial Flow Summary */}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                 {[
-                  { label: 'Income', value: financialSummary.grossIncome, color: 'text-emerald-400', bg: 'bg-emerald-500/8' },
-                  { label: 'Budget Expenses', value: totalExpenses, color: 'text-orange-400', bg: 'bg-orange-500/8' },
-                  { label: 'Savings', value: financialSummary.totalAssets, color: 'text-violet-400', bg: 'bg-violet-500/8' },
-                  { label: 'Spare Spent', value: totalSpareSpent + totalConsumableSpent + totalBorrowingSpent, color: 'text-amber-400', bg: 'bg-amber-500/8' },
-                  { label: 'Remaining', value: remainingSpare, color: remainingSpare >= 0 ? 'text-emerald-400' : 'text-orange-400', bg: remainingSpare >= 0 ? 'bg-emerald-500/8' : 'bg-orange-500/8' },
-                ].map((item, i) => (
-                  <div key={item.label} className="flex items-center gap-2">
-                    <div className={cn('flex-1 rounded-lg p-3', item.bg)}>
-                      <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
+                  {
+                    label: 'Net Income',
+                    value: financialSummary.netIncome,
+                    color: 'text-emerald-500 dark:text-emerald-400',
+                    bg: 'bg-emerald-500/8',
+                    tooltip: (
+                      <div className="space-y-0.5 text-xs text-background/90">
+                        <p className="font-semibold mb-1 text-background">Net Income Calculation:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-background/70">Gross Income:</span>
+                          <span className="font-medium text-background">PHP {formatPHP(financialSummary.grossIncome)}</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">Total Tax:</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(financialSummary.totalTax)}</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">Total Deductions:</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(financialSummary.totalDeductions ?? 0)}</span>
+                          <span className="text-emerald-400 dark:text-emerald-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">Net Income:</span>
+                          <span className="text-emerald-400 dark:text-emerald-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">PHP {formatPHP(financialSummary.netIncome)}</span>
+                        </div>
+                      </div>
+                    )
+                  },
+                  {
+                    label: 'Budget Expenses',
+                    value: totalExpenses,
+                    color: 'text-orange-500 dark:text-orange-400',
+                    bg: 'bg-orange-500/8',
+                    tooltip: (
+                      <div className="space-y-0.5 text-xs text-background/90">
+                        <p className="font-semibold mb-1 text-background">Budget Expenses Calculation:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-background/70">Salary Allocation:</span>
+                          <span className="font-medium text-background">PHP {formatPHP(financialSummary.totalExpensesSum)}</span>
+                          <span className="text-background/70">Additional Paid Bills:</span>
+                          <span className="font-medium text-background">+ PHP {formatPHP(additionalExpenseOutflow)}</span>
+                          {forgivenLent > 0 && (
+                            <>
+                              <span className="text-background/70">Forgiven Lent:</span>
+                              <span className="font-medium text-background">+ PHP {formatPHP(forgivenLent)}</span>
+                            </>
+                          )}
+                          <span className="text-orange-400 dark:text-orange-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">Total Expenses:</span>
+                          <span className="text-orange-400 dark:text-orange-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">PHP {formatPHP(totalExpenses)}</span>
+                        </div>
+                      </div>
+                    )
+                  },
+                  {
+                    label: 'Savings',
+                    value: financialSummary.totalSavings ?? financialSummary.totalAssets,
+                    color: 'text-violet-500 dark:text-violet-400',
+                    bg: 'bg-violet-500/8',
+                    tooltip: (
+                      <div className="space-y-0.5 text-xs max-w-[220px] text-background/90">
+                        <p className="font-semibold mb-1 text-background">Savings Calculation:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-background/70">Deposited this month:</span>
+                          <span className="font-medium text-background">PHP {formatPHP(financialSummary.totalSavings ?? financialSummary.totalAssets)}</span>
+                        </div>
+                        <p className="text-[10px] text-background/70 mt-1.5 italic leading-normal border-t border-background/20 pt-1">
+                          Note: The list below shows a current remaining balance of PHP {formatPHP(financialSummary.totalAssets)} after deducting expenses paid from savings.
+                        </p>
+                      </div>
+                    )
+                  },
+                  {
+                    label: 'Spare Spent',
+                    value: totalSpareSpent + totalConsumableSpent + totalBorrowingSpent,
+                    color: 'text-amber-500 dark:text-amber-400',
+                    bg: 'bg-amber-500/8',
+                    tooltip: (
+                      <div className="space-y-0.5 text-xs text-background/90">
+                        <p className="font-semibold mb-1 text-background">Spare Spent Calculation:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-background/70">Spare Transactions:</span>
+                          <span className="font-medium text-background">PHP {formatPHP(totalSpareSpent)}</span>
+                          <span className="text-background/70">Consumable Budget:</span>
+                          <span className="font-medium text-background">+ PHP {formatPHP(totalConsumableSpent)}</span>
+                          <span className="text-background/70">Borrowing Expenses:</span>
+                          <span className="font-medium text-background">+ PHP {formatPHP(totalBorrowingSpent)}</span>
+                          <span className="text-amber-400 dark:text-amber-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">Total Spent:</span>
+                          <span className="text-amber-400 dark:text-amber-600 font-bold border-t border-background/20 pt-0.5 mt-0.5">PHP {formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)}</span>
+                        </div>
+                      </div>
+                    )
+                  },
+                  {
+                    label: 'Remaining',
+                    value: remainingSpare,
+                    color: remainingSpare >= 0 ? 'text-emerald-500 dark:text-emerald-400' : 'text-orange-500 dark:text-orange-400',
+                    bg: remainingSpare >= 0 ? 'bg-emerald-500/8' : 'bg-orange-500/8',
+                    tooltip: (
+                      <div className="space-y-0.5 text-xs text-background/90">
+                        <p className="font-semibold mb-1 text-background">Remaining Calculation:</p>
+                        <div className="grid grid-cols-[1fr_auto] gap-x-4">
+                          <span className="text-background/70">Net Income:</span>
+                          <span className="font-medium text-background">PHP {formatPHP(financialSummary.netIncome)}</span>
+                          
+                          {giftedIncome > 0 && (
+                            <>
+                              <span className="text-emerald-400 dark:text-emerald-600">Gifted Borrowings:</span>
+                              <span className="text-emerald-400 dark:text-emerald-600 font-medium">+ PHP {formatPHP(giftedIncome)}</span>
+                            </>
+                          )}
+                          
+                          <span className="text-rose-400 dark:text-rose-600">Budget Expenses:</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalExpenses)}</span>
+                          
+                          <span className="text-rose-400 dark:text-rose-600">Savings & Assets:</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(financialSummary.totalSavings ?? financialSummary.totalAssets)}</span>
+                          
+                          <span className="text-rose-400 dark:text-rose-600">Spare Spent:</span>
+                          <span className="text-rose-400 dark:text-rose-600 font-medium">- PHP {formatPHP(totalSpareSpent + totalConsumableSpent + totalBorrowingSpent)}</span>
+                          
+                          <span className="font-bold border-t border-background/20 pt-0.5 mt-0.5 text-background">Total Remaining:</span>
+                          <span className="font-bold border-t border-background/20 pt-0.5 mt-0.5 text-background">PHP {formatPHP(remainingSpare)}</span>
+                        </div>
+                      </div>
+                    )
+                  },
+                ].map((item, i) => {
+                  const cardContent = (
+                    <div className={cn('flex-1 rounded-lg p-3 w-full', item.bg)}>
+                      <div className="flex items-center gap-1">
+                        <p className="text-[11px] font-medium text-muted-foreground">{item.label}</p>
+                        {item.tooltip && (
+                          <TooltipProvider>
+                            <UITooltip>
+                              <TooltipTrigger className="flex cursor-help opacity-70 transition-opacity hover:opacity-100 shrink-0">
+                                <Info className="h-3 w-3 text-muted-foreground" />
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-xs">
+                                {item.tooltip}
+                              </TooltipContent>
+                            </UITooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
                       <p className={cn('text-sm font-bold tabular-nums', item.color)}>
                         PHP {formatPHP(item.value)}
                       </p>
                     </div>
-                    {i < 4 && (
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/30 hidden lg:block" />
-                    )}
-                  </div>
-                ))}
+                  );
+
+                  return (
+                    <div key={item.label} className="flex items-center gap-2 w-full">
+                      {cardContent}
+                      {i < 4 && (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/30 hidden lg:block" />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               <Separator />
@@ -1952,6 +2133,7 @@ export default function DashboardPage() {
                         const bill = billPayments.find((b) => b.allocation_id === alloc.id);
                         const isPaid = bill?.is_paid ?? false;
                         const isPartial = !isPaid && Number(bill?.amount ?? 0) > 0;
+                        const targetAmount = hasPeriodData ? ((actualAllocatedMap.get(alloc.id) || Number(bill?.amount || 0)) || alloc.amount) : alloc.amount;
                         return (
                           <button
                             key={alloc.id}
@@ -1988,7 +2170,7 @@ export default function DashboardPage() {
                                 )}
                                 {isPartial && (
                                   <span className="text-[10px] text-amber-500">
-                                    Paid {formatPHP(Number(bill!.amount))} of {formatPHP(hasPeriodData ? (actualAllocatedMap.get(alloc.id) ?? 0) : alloc.amount)}
+                                    Paid {formatPHP(Number(bill!.amount))} of {formatPHP(targetAmount)}
                                   </span>
                                 )}
                               </div>
@@ -1997,7 +2179,7 @@ export default function DashboardPage() {
                               'text-xs font-semibold tabular-nums shrink-0',
                               isPaid ? 'text-muted-foreground' : 'text-foreground'
                             )}>
-                              PHP {formatPHP(hasPeriodData ? (actualAllocatedMap.get(alloc.id) ?? 0) : alloc.amount)}
+                              PHP {formatPHP(targetAmount)}
                             </span>
                           </button>
                         );
@@ -2023,22 +2205,26 @@ export default function DashboardPage() {
                   <div className="flex flex-col gap-1">
                     {allocations
                       .filter((a) => getClassification(a) === 'asset')
-                      .map((alloc) => (
-                        <div
-                          key={alloc.id}
-                          className="flex items-center justify-between rounded-lg p-2.5 hover:bg-muted/50 transition-colors duration-150"
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/10">
-                              <Landmark className="h-3.5 w-3.5 text-violet-500" />
+                      .map((alloc) => {
+                        const summary = allocationFundSummaries.find((s) => s.allocation_id === alloc.id);
+                        const displayedValue = summary ? summary.remaining : (hasPeriodData ? (actualAllocatedMap.get(alloc.id) ?? 0) : alloc.amount);
+                        return (
+                          <div
+                            key={alloc.id}
+                            className="flex items-center justify-between rounded-lg p-2.5 hover:bg-muted/50 transition-colors duration-150"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/10">
+                                <Landmark className="h-3.5 w-3.5 text-violet-500" />
+                              </div>
+                              <span className="text-xs font-medium capitalize text-foreground">{alloc.category}</span>
                             </div>
-                            <span className="text-xs font-medium capitalize text-foreground">{alloc.category}</span>
+                            <span className="text-xs font-semibold tabular-nums text-violet-500">
+                              PHP {formatPHP(displayedValue)}
+                            </span>
                           </div>
-                          <span className="text-xs font-semibold tabular-nums text-violet-500">
-                            PHP {formatPHP(hasPeriodData ? (actualAllocatedMap.get(alloc.id) ?? 0) : alloc.amount)}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     {allocations.filter((a) => getClassification(a) === 'asset').length === 0 && (
                       <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
                         No asset allocations configured
