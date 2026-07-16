@@ -12,6 +12,15 @@ import {
   AlertDialogFooter,
 } from '@/components/ui/alert-dialog';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog';
+import {
   DollarSign,
   Receipt,
   ArrowDownRight,
@@ -90,6 +99,7 @@ import {
   deleteAllocationExpense,
   createBorrowing,
   updatePayPeriod,
+  createSpareTransaction,
 } from '@/features/salary/services/salary.service';
 import type {
   SalaryConfig,
@@ -923,6 +933,15 @@ export default function DashboardPage() {
   const [paidBy, setPaidBy] = useState('');
   const [sharedTotal, setSharedTotal] = useState('');
   const [sharedParties, setSharedParties] = useState(2);
+
+  // Form states for Transfer Funds
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferSource, setTransferSource] = useState('spare');
+  const [transferDest, setTransferDest] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferDesc, setTransferDesc] = useState('');
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+  const [isSavingTransfer, setIsSavingTransfer] = useState(false);
   const [deductFromHeldFundId, setDeductFromHeldFundId] = useState('');
   const [deductAmount, setDeductAmount] = useState('');
 
@@ -1509,6 +1528,105 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleTransfer() {
+    if (!userId || !transferSource || !transferDest || !transferAmount) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    if (transferSource === transferDest) {
+      toast.error('Source and destination must be different');
+      return;
+    }
+
+    const amountNum = parseFloat(transferAmount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      toast.error('Amount must be greater than 0');
+      return;
+    }
+
+    const needsPeriod = transferSource === 'spare' || transferDest === 'spare';
+    if (needsPeriod && !latestPeriod) {
+      toast.error('Please create at least one pay period in Payroll first.');
+      return;
+    }
+
+    setIsSavingTransfer(true);
+    try {
+      const transferLinkId = crypto.randomUUID();
+      const allocMap = new Map(allocations.map((a) => [a.id, a]));
+      const sourceName = transferSource === 'spare' ? 'Spare Cash' : (allocMap.get(transferSource)?.category || 'Allocation');
+      const destName = transferDest === 'spare' ? 'Spare Cash' : (allocMap.get(transferDest)?.category || 'Allocation');
+      const baseDesc = transferDesc.trim() ? `: ${transferDesc.trim()}` : '';
+
+      if (transferSource === 'spare') {
+        // Spare -> Allocation
+        await Promise.all([
+          createSpareTransaction(userId, latestPeriod!.id, {
+            description: `Transfer to ${destName}${baseDesc}`,
+            amount: amountNum,
+            transaction_date: transferDate,
+            transfer_link_id: transferLinkId,
+          }),
+          createAllocationExpense(userId, {
+            allocation_id: transferDest,
+            description: `Transfer from Spare Cash${baseDesc}`,
+            amount: -amountNum,
+            expense_date: transferDate,
+            transfer_link_id: transferLinkId,
+          })
+        ]);
+      } else if (transferDest === 'spare') {
+        // Allocation -> Spare
+        await Promise.all([
+          createAllocationExpense(userId, {
+            allocation_id: transferSource,
+            description: `Transfer to Spare Cash${baseDesc}`,
+            amount: amountNum,
+            expense_date: transferDate,
+            transfer_link_id: transferLinkId,
+          }),
+          createSpareTransaction(userId, latestPeriod!.id, {
+            description: `Transfer from ${sourceName}${baseDesc}`,
+            amount: -amountNum,
+            transaction_date: transferDate,
+            transfer_link_id: transferLinkId,
+          })
+        ]);
+      } else {
+        // Allocation -> Allocation
+        await Promise.all([
+          createAllocationExpense(userId, {
+            allocation_id: transferSource,
+            description: `Transfer to ${destName}${baseDesc}`,
+            amount: amountNum,
+            expense_date: transferDate,
+            transfer_link_id: transferLinkId,
+          }),
+          createAllocationExpense(userId, {
+            allocation_id: transferDest,
+            description: `Transfer from ${sourceName}${baseDesc}`,
+            amount: -amountNum,
+            expense_date: transferDate,
+            transfer_link_id: transferLinkId,
+          })
+        ]);
+      }
+
+      toast.success('Funds transferred successfully');
+      setTransferAmount('');
+      setTransferDesc('');
+      setShowTransferModal(false);
+      setIsLoading(true);
+      await fetchData(dateFilter, customMonth);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to transfer funds';
+      toast.error(msg);
+    } finally {
+      setIsSavingTransfer(false);
+    }
+  }
+
   if (isLoading) {
     return <DashboardSkeleton />;
   }
@@ -1637,7 +1755,7 @@ export default function DashboardPage() {
       className="flex flex-col gap-6"
     >
       {/* Date Filter Bar */}
-      <div data-onboarding="date-filter" className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div data-onboarding="date-filter" className="sticky top-14 z-20 -mx-4 bg-background/80 px-4 py-3 backdrop-blur-md border-b border-border/20 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 flex items-center justify-between gap-4 overflow-x-auto scrollbar-none">
         <motion.div
           variants={staggerItem}
           className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none"
@@ -1673,6 +1791,23 @@ export default function DashboardPage() {
               placeholder="Custom"
             />
           </div>
+        </motion.div>
+
+        <motion.div variants={staggerItem} className="shrink-0">
+          <Button
+            onClick={() => {
+              setTransferSource('spare');
+              setTransferDest(allocations[0]?.id || 'spare');
+              setTransferAmount('');
+              setTransferDesc('');
+              setTransferDate(new Date().toISOString().split('T')[0]);
+              setShowTransferModal(true);
+            }}
+            className="h-8 gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer shadow-sm"
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5" />
+            Transfer Funds
+          </Button>
         </motion.div>
       </div>
 
@@ -2961,17 +3096,21 @@ export default function DashboardPage() {
                                     <div className="flex items-center gap-2 shrink-0">
                                       <span className={cn(
                                         "text-xs font-bold tabular-nums text-right",
-                                        (expense.borrowing_id && !expense.is_borrowing_settled)
-                                          ? "text-amber-500"
-                                          : (expense.held_fund_id && !expense.borrowing_id)
-                                            ? "text-blue-400"
-                                            : "text-rose-400"
+                                        expense.amount < 0
+                                          ? "text-emerald-400 dark:text-emerald-500"
+                                          : (expense.borrowing_id && !expense.is_borrowing_settled)
+                                            ? "text-amber-500"
+                                            : (expense.held_fund_id && !expense.borrowing_id)
+                                              ? "text-blue-400"
+                                              : "text-rose-400"
                                       )}>
-                                        {(expense.borrowing_id && !expense.is_borrowing_settled)
-                                          ? `Owed PHP ${formatPHP(expense.amount)}`
-                                          : (expense.held_fund_id && !expense.borrowing_id)
-                                            ? `PHP 0.00 (PHP ${formatPHP(expense.amount)} held)`
-                                            : `-PHP ${formatPHP(expense.amount)}`}
+                                        {expense.amount < 0
+                                          ? `+PHP ${formatPHP(Math.abs(expense.amount))}`
+                                          : (expense.borrowing_id && !expense.is_borrowing_settled)
+                                            ? `Owed PHP ${formatPHP(expense.amount)}`
+                                            : (expense.held_fund_id && !expense.borrowing_id)
+                                              ? `PHP 0.00 (PHP ${formatPHP(expense.amount)} held)`
+                                              : `-PHP ${formatPHP(expense.amount)}`}
                                       </span>
                                       <ConfirmDialog
                                         trigger={
@@ -3562,6 +3701,120 @@ export default function DashboardPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Transfer Funds Modal */}
+      <Dialog open={showTransferModal} onOpenChange={setShowTransferModal}>
+        <DialogContent className="sm:max-w-md bg-popover text-popover-foreground rounded-2xl border border-border/40 p-6 space-y-4">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold flex items-center gap-2">
+              <ArrowRightLeft className="h-5 w-5 text-primary" />
+              Transfer Funds
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Move money dynamically between your Spare Cash and Budget Allocations.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-1">
+            <div className="grid grid-cols-2 gap-4">
+              {/* Source Select */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">From (Source)</label>
+                <select
+                  value={transferSource}
+                  onChange={(e) => setTransferSource(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary h-9 font-medium"
+                >
+                  <option value="spare">Spare Cash</option>
+                  {allocations.map((alloc) => (
+                    <option key={alloc.id} value={alloc.id}>
+                      {alloc.category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Destination Select */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">To (Destination)</label>
+                <select
+                  value={transferDest}
+                  onChange={(e) => setTransferDest(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary h-9 font-medium"
+                >
+                  <option value="spare">Spare Cash</option>
+                  {allocations.map((alloc) => (
+                    <option key={alloc.id} value={alloc.id}>
+                      {alloc.category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Amount Input */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Amount (PHP)</label>
+              <Input
+                type="number"
+                placeholder="e.g. 2000"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                className="h-9 text-xs bg-background/50 font-medium"
+              />
+            </div>
+
+            {/* Description Input */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Description / Note</label>
+              <Input
+                placeholder="e.g. Brother returned braces money"
+                value={transferDesc}
+                onChange={(e) => setTransferDesc(e.target.value)}
+                className="h-9 text-xs bg-background/50 font-medium"
+              />
+            </div>
+
+            {/* Date Input */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Transfer Date</label>
+              <Input
+                type="date"
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                className="h-9 text-xs bg-background/50 font-medium"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-6 flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSavingTransfer}
+              onClick={() => setShowTransferModal(false)}
+              className="h-9 text-xs cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={isSavingTransfer}
+              onClick={handleTransfer}
+              className="h-9 text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
+            >
+              {isSavingTransfer ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Transferring...
+                </span>
+              ) : (
+                "Confirm Transfer"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </motion.div>
   );

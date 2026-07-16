@@ -20,6 +20,7 @@ import type {
   AllocationExpense,
   HeldFund,
   AllocationFundSummary,
+  AllocationExpenseWithCategory,
 } from '../types/salary.types';
 import { calculatePayPeriod } from '../utils/calculations';
 
@@ -497,6 +498,7 @@ export async function createSpareTransaction(
     description: string;
     amount: number;
     transaction_date?: string;
+    transfer_link_id?: string;
   }
 ): Promise<SpareTransaction> {
   const { data, error } = await supabase
@@ -507,6 +509,7 @@ export async function createSpareTransaction(
       description: transaction.description,
       amount: transaction.amount,
       transaction_date: transaction.transaction_date ?? new Date().toISOString().split('T')[0],
+      transfer_link_id: transaction.transfer_link_id ?? null,
     })
     .select()
     .single();
@@ -516,12 +519,33 @@ export async function createSpareTransaction(
 }
 
 export async function deleteSpareTransaction(id: string): Promise<void> {
-  const { error } = await supabase
-    .from('spare_transactions')
-    .delete()
-    .eq('id', id);
+  const supabase = createClient();
 
-  if (error) throw error;
+  // Fetch first to check for transfer link
+  const { data: txn, error: fetchError } = await supabase
+    .from('spare_transactions')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (!fetchError && txn && txn.transfer_link_id) {
+    // Delete both sides of the transfer
+    await supabase
+      .from('allocation_expenses')
+      .delete()
+      .eq('transfer_link_id', txn.transfer_link_id);
+    await supabase
+      .from('spare_transactions')
+      .delete()
+      .eq('transfer_link_id', txn.transfer_link_id);
+  } else {
+    // Normal delete
+    const { error } = await supabase
+      .from('spare_transactions')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+  }
 }
 
 export async function getSpareTotal(payPeriodId: string): Promise<number> {
@@ -611,6 +635,98 @@ export async function deleteBillPaymentsByMonth(month: string): Promise<void> {
     .eq('month', month);
 
   if (error) throw error;
+}
+
+/** Recalculate monthly bill payment totals by summing up all actual pay period allocations */
+export async function recalculateBillPaymentsForMonth(
+  userId: string,
+  month: string
+): Promise<void> {
+  const supabase = createClient();
+
+  // 1. Get salary config to get the budget allocations
+  const { data: config } = await supabase
+    .from('salary_configs')
+    .select('id, full_time_salary, part_time_salary')
+    .eq('user_id', userId)
+    .single();
+
+  if (!config) return;
+
+  const combinedSalary = (config.full_time_salary || 0) + (config.part_time_salary || 0);
+
+  // Get budget allocations
+  const { data: allocs } = await supabase
+    .from('budget_allocations')
+    .select('*')
+    .eq('salary_config_id', config.id);
+
+  if (!allocs) return;
+
+  // Fetch allocation types to map classifications
+  const { data: dbTypes } = await supabase
+    .from('allocation_types')
+    .select('*');
+
+  const typeMap = new Map((dbTypes || []).map((t) => [t.id, t.classification]));
+
+  // Compute budgeted amounts
+  const computedAllocs = allocs.map((a: any) => {
+    const pct = Number(a.percentage ?? 0);
+    const amount = combinedSalary * pct;
+    
+    let classification: string | undefined;
+    if (a.allocation_type_id) {
+      classification = typeMap.get(a.allocation_type_id);
+    }
+    
+    return {
+      id: a.id,
+      category: a.category,
+      budgeted: amount,
+      classification: classification || 'expense'
+    };
+  });
+
+  // 2. Fetch all pay periods for the month
+  const { data: periods } = await supabase
+    .from('pay_periods')
+    .select('*')
+    .eq('user_id', userId);
+
+  const thisMonthPeriods = (periods ?? []).filter(
+    (p) => p.created_at && p.created_at.slice(0, 7) === month
+  );
+
+  // 3. Sum up actual amounts
+  const allocationTotals = new Map<string, number>();
+  for (const p of thisMonthPeriods) {
+    const allocAmounts = (p.allocation_amounts || []) as any[];
+    for (const alloc of allocAmounts) {
+      const currentTotal = allocationTotals.get(alloc.allocation_id) ?? 0;
+      allocationTotals.set(alloc.allocation_id, currentTotal + Number(alloc.actual ?? 0));
+    }
+  }
+
+  // 4. Update bill payments for each computed allocation
+  for (const alloc of computedAllocs) {
+    if (alloc.category.toLowerCase() === 'spare') continue;
+
+    const totalPaid = allocationTotals.get(alloc.id) ?? 0;
+    const isFullyPaid = totalPaid >= alloc.budgeted;
+
+    await supabase.from('bill_payments').upsert(
+      {
+        user_id: userId,
+        allocation_id: alloc.id,
+        month,
+        amount: totalPaid,
+        is_paid: isFullyPaid,
+        paid_at: isFullyPaid ? new Date().toISOString() : null,
+      },
+      { onConflict: 'user_id,allocation_id,month' }
+    );
+  }
 }
 
 export async function initMonthlyBills(
@@ -1510,6 +1626,54 @@ export async function getConsumableExpensesByUser(
   return data ?? [];
 }
 
+/** Get consumable expenses for a user in a specific date range */
+export async function getConsumableExpensesInRange(
+  userId: string,
+  opts?: { dateFrom?: string; dateTo?: string }
+): Promise<ConsumableExpense[]> {
+  const supabase = createClient();
+  let query = supabase
+    .from('consumable_expenses')
+    .select('*')
+    .eq('user_id', userId)
+    .order('expense_date', { ascending: false });
+
+  if (opts?.dateFrom) {
+    query = query.gte('expense_date', opts.dateFrom.substring(0, 10));
+  }
+  if (opts?.dateTo) {
+    query = query.lte('expense_date', opts.dateTo.substring(0, 10));
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Get all allocation expenses for a user, optionally filtered by date range, with category information */
+export async function getAllAllocationExpenses(
+  userId: string,
+  opts?: { dateFrom?: string; dateTo?: string }
+): Promise<AllocationExpenseWithCategory[]> {
+  const supabase = createClient();
+  let query = supabase
+    .from('allocation_expenses')
+    .select('*, budget_allocations(category)')
+    .eq('user_id', userId)
+    .order('expense_date', { ascending: false });
+
+  if (opts?.dateFrom) {
+    query = query.gte('expense_date', opts.dateFrom.substring(0, 10));
+  }
+  if (opts?.dateTo) {
+    query = query.lte('expense_date', opts.dateTo.substring(0, 10));
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data as any) ?? [];
+}
+
 // ============================================
 // ALLOCATION EXPENSES (Fund Tracker)
 // ============================================
@@ -1667,6 +1831,7 @@ export async function createAllocationExpense(
     held_fund_id?: string;
     held_fund_deduction?: number;
     notes?: string;
+    transfer_link_id?: string;
   }
 ): Promise<AllocationExpense> {
   const supabase = createClient();
@@ -1729,6 +1894,7 @@ export async function createAllocationExpense(
       borrowing_id: borrowingId,
       held_fund_id: heldFundId,
       notes: input.notes ?? null,
+      transfer_link_id: input.transfer_link_id ?? null,
     })
     .select()
     .single();
@@ -1741,7 +1907,7 @@ export async function createAllocationExpense(
 export async function deleteAllocationExpense(id: string): Promise<void> {
   const supabase = createClient();
 
-  // Fetch the expense first to check for held fund link
+  // Fetch the expense first to check for held fund link and transfer link
   const { data: expense, error: fetchError } = await supabase
     .from('allocation_expenses')
     .select('*')
@@ -1778,13 +1944,24 @@ export async function deleteAllocationExpense(id: string): Promise<void> {
       .eq('id', expense.borrowing_id);
   }
 
-  // Delete the expense
-  const { error } = await supabase
-    .from('allocation_expenses')
-    .delete()
-    .eq('id', id);
-
-  if (error) throw error;
+  // If linked to a transfer, delete the matching spare_transactions and other allocation_expenses
+  if (expense.transfer_link_id) {
+    await supabase
+      .from('spare_transactions')
+      .delete()
+      .eq('transfer_link_id', expense.transfer_link_id);
+    await supabase
+      .from('allocation_expenses')
+      .delete()
+      .eq('transfer_link_id', expense.transfer_link_id);
+  } else {
+    // Delete the single expense
+    const { error } = await supabase
+      .from('allocation_expenses')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+  }
 }
 
 // ============================================

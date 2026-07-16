@@ -67,6 +67,13 @@ import {
   autoSnapshotPreviousMonth,
   getCurrentUser,
   getSalaryConfig,
+  getAllAllocationExpenses,
+  getConsumableExpensesInRange,
+  deleteAllocationExpense,
+  deleteSpareTransaction,
+  deleteConsumableExpense,
+  deleteBorrowing,
+  recalculateBillPaymentsForMonth,
 } from '@/features/salary/services/salary.service';
 import { formatPHP } from '@/features/salary/utils/calculations';
 
@@ -443,8 +450,11 @@ function SpareTransactionsSection({
                   </span>
                   <span className="text-xs truncate">{t.description}</span>
                 </div>
-                <span className="text-xs tabular-nums font-medium text-rose-500 shrink-0 ml-3">
-                  -P {formatPHP(t.amount)}
+                <span className={cn(
+                  "text-xs tabular-nums font-medium shrink-0 ml-3",
+                  t.amount < 0 ? "text-emerald-500" : "text-rose-500"
+                )}>
+                  {t.amount < 0 ? `+P ${formatPHP(Math.abs(t.amount))}` : `-P ${formatPHP(t.amount)}`}
                 </span>
               </div>
             ))}
@@ -1029,13 +1039,20 @@ export default function HistoryPage() {
   }, [fetchPeriods]);
 
   // ------ New tab state ------
-  const [activeTab, setActiveTab] = useState<'overall' | 'payroll' | 'consumable' | 'borrowing'>('overall');
+  const [activeTab, setActiveTab] = useState<'overall' | 'payroll' | 'consumable' | 'borrowing' | 'ledger'>('overall');
   const [consumableRecords, setConsumableRecords] = useState<ConsumableMonthlyRecord[]>([]);
   const [borrowingHistory, setBorrowingHistory] = useState<BorrowingWithExpenses[]>([]);
   const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
   const [monthExpenses, setMonthExpenses] = useState<Record<string, ConsumableExpense[]>>({});
   const [isLoadingTab, setIsLoadingTab] = useState(false);
   const [borrowingFilter, setBorrowingFilter] = useState<'all' | 'active' | 'settled'>('all');
+
+  // Unified ledger states
+  const [ledgerTransactions, setLedgerTransactions] = useState<any[]>([]);
+  const [isLoadingLedger, setIsLoadingLedger] = useState(false);
+  const [ledgerFilter, setLedgerFilter] = useState<'all' | 'allocation' | 'spare' | 'consumable' | 'borrowing'>('all');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [processingLedgerIds, setProcessingLedgerIds] = useState<string[]>([]);
 
   // Compute dateRange from existing dateFilter + customMonth for consumable/borrowing queries
   const dateRange = useMemo<{ from: string; to: string } | null>(() => {
@@ -1166,6 +1183,108 @@ export default function HistoryPage() {
     }
   }, [monthExpenses]);
 
+  const loadLedgerHistory = useCallback(async () => {
+    setIsLoadingLedger(true);
+    try {
+      const user = await getCurrentUser();
+      if (!user) return;
+
+      const opts = dateRange ? { dateFrom: dateRange.from, dateTo: dateRange.to } : {};
+      
+      const [allocExpenses, spareTxns, consumableTxns, borrowings] = await Promise.all([
+        getAllAllocationExpenses(user.id, opts).catch(() => []),
+        getSpareTransactionsInRange(opts).catch(() => []),
+        getConsumableExpensesInRange(user.id, opts).catch(() => []),
+        getBorrowingsWithExpenses(opts).catch(() => []),
+      ]);
+
+      const list: any[] = [];
+
+      // 1. Map Allocation Expenses
+      allocExpenses.forEach((ae) => {
+        list.push({
+          id: ae.id,
+          date: ae.expense_date,
+          type: 'allocation',
+          typeName: `Allocation: ${ae.budget_allocations?.category || 'General'}`,
+          description: ae.description,
+          amount: ae.amount,
+          originalRecord: ae,
+        });
+      });
+
+      // 2. Map Spare Transactions
+      spareTxns.forEach((st) => {
+        list.push({
+          id: st.id,
+          date: st.transaction_date,
+          type: 'spare',
+          typeName: 'Spare Cash',
+          description: st.description,
+          amount: st.amount,
+          originalRecord: st,
+        });
+      });
+
+      // 3. Map Consumable Expenses
+      consumableTxns.forEach((ce) => {
+        list.push({
+          id: ce.id,
+          date: ce.expense_date,
+          type: 'consumable',
+          typeName: 'Consumable',
+          description: ce.description,
+          amount: ce.amount,
+          originalRecord: ce,
+        });
+      });
+
+      // 4. Map Borrowings
+      borrowings.forEach((b) => {
+        list.push({
+          id: b.id,
+          date: b.transaction_date,
+          type: 'borrowing',
+          typeName: b.type === 'lent' ? 'Borrowing (Lent)' : 'Borrowing (Borrowed)',
+          description: `${b.type === 'lent' ? 'Lent to' : 'Borrowed from'} ${b.person_name} (${b.description || 'No description'})`,
+          amount: b.type === 'lent' ? b.amount : -b.amount,
+          originalRecord: b,
+        });
+      });
+
+      // Sort by date descending
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setLedgerTransactions(list);
+    } catch (err) {
+      toast.error('Failed to load ledger transactions');
+    } finally {
+      setIsLoadingLedger(false);
+    }
+  }, [dateRange]);
+
+  async function handleDeleteLedgerItem(item: any) {
+    setProcessingLedgerIds((prev) => [...prev, item.id]);
+    try {
+      if (item.type === 'allocation') {
+        await deleteAllocationExpense(item.id);
+      } else if (item.type === 'spare') {
+        await deleteSpareTransaction(item.id);
+      } else if (item.type === 'consumable') {
+        await deleteConsumableExpense(item.id);
+      } else if (item.type === 'borrowing') {
+        await deleteBorrowing(item.id);
+      }
+      toast.success('Transaction deleted successfully');
+      await loadLedgerHistory();
+      fetchPeriods();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete transaction';
+      toast.error(msg);
+    } finally {
+      setProcessingLedgerIds((prev) => prev.filter((id) => id !== item.id));
+    }
+  }
+
   useEffect(() => {
     if (activeTab === 'overall') {
       loadConsumableHistory();
@@ -1174,8 +1293,10 @@ export default function HistoryPage() {
       loadConsumableHistory();
     } else if (activeTab === 'borrowing') {
       loadBorrowingHistory();
+    } else if (activeTab === 'ledger') {
+      loadLedgerHistory();
     }
-  }, [activeTab, loadConsumableHistory, loadBorrowingHistory]);
+  }, [activeTab, loadConsumableHistory, loadBorrowingHistory, loadLedgerHistory]);
 
   // Delete handler
   async function handleDelete(id: string, label: string) {
@@ -1186,7 +1307,7 @@ export default function HistoryPage() {
       await deletePayPeriod(id);
       setPeriods((prev) => prev.filter((p) => p.id !== id));
 
-      // Clear bill payments for that month if no other periods remain for the same month
+      // Clear or recalculate bill payments for that month
       if (period?.created_at) {
         const month = period.created_at.slice(0, 7); // "YYYY-MM"
         const remainingInMonth = periods.filter(
@@ -1198,6 +1319,12 @@ export default function HistoryPage() {
             '@/features/salary/services/salary.service'
           );
           await deleteBillPaymentsByMonth(month);
+        } else {
+          // Recalculate bill payments for the month based on remaining periods
+          const user = await getCurrentUser();
+          if (user) {
+            await recalculateBillPaymentsForMonth(user.id, month);
+          }
         }
       }
 
@@ -1663,7 +1790,7 @@ export default function HistoryPage() {
         </div>
 
         {/* History Type Tabs */}
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'payroll' | 'consumable' | 'borrowing')} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
           <TabsList className="flex w-full items-center justify-start overflow-x-auto flex-nowrap p-1 gap-1 h-11 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:inline-flex sm:w-fit">
             <TabsTrigger value="overall" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <TrendingUp className="h-4 w-4" />
@@ -1680,6 +1807,10 @@ export default function HistoryPage() {
             <TabsTrigger value="borrowing" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
               <HandCoins className="h-4 w-4" />
               <span className="tab-label-reveal">Borrowing</span>
+            </TabsTrigger>
+            <TabsTrigger value="ledger" className="flex-1 sm:flex-initial h-9 gap-1 sm:gap-2 px-2.5 sm:px-5 text-xs sm:text-sm shrink-0 whitespace-nowrap">
+              <History className="h-4 w-4" />
+              <span className="tab-label-reveal">Ledger</span>
             </TabsTrigger>
           </TabsList>
 
@@ -3095,6 +3226,171 @@ export default function HistoryPage() {
                 </motion.div>
               </>
             )}
+          </TabsContent>
+
+          {/* Unified Transaction Ledger Tab */}
+          <TabsContent value="ledger" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-lg font-bold flex items-center gap-2">
+                      <History className="h-5 w-5 text-primary" />
+                      Unified Transaction Ledger
+                    </CardTitle>
+                    <CardDescription className="text-xs text-muted-foreground">
+                      Chronological history of all your budget allocations, spare spending, consumables, and borrowings.
+                    </CardDescription>
+                  </div>
+                  
+                  {/* Ledger Filters */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    {/* Search */}
+                    <div className="relative flex-1 sm:w-60">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        type="text"
+                        placeholder="Search description..."
+                        value={ledgerSearch}
+                        onChange={(e) => setLedgerSearch(e.target.value)}
+                        className="pl-9 h-9 text-xs"
+                      />
+                    </div>
+                    {/* Type Filter */}
+                    <select
+                      value={ledgerFilter}
+                      onChange={(e: any) => setLedgerFilter(e.target.value)}
+                      className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary h-9 font-medium cursor-pointer"
+                    >
+                      <option value="all">All Types</option>
+                      <option value="allocation">Allocations Only</option>
+                      <option value="spare">Spare Cash Only</option>
+                      <option value="consumable">Consumables Only</option>
+                      <option value="borrowing">Borrowings Only</option>
+                    </select>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent>
+                {isLoadingLedger ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-xs text-muted-foreground font-medium">Loading transactions...</p>
+                  </div>
+                ) : (() => {
+                  const filtered = ledgerTransactions.filter((item) => {
+                    const matchesType = ledgerFilter === 'all' || item.type === ledgerFilter;
+                    const matchesSearch = !ledgerSearch.trim() || 
+                      item.description.toLowerCase().includes(ledgerSearch.toLowerCase()) ||
+                      item.typeName.toLowerCase().includes(ledgerSearch.toLowerCase());
+                    return matchesType && matchesSearch;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted mb-4">
+                          <History className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                        <h3 className="text-sm font-semibold mb-1">
+                          No transactions found
+                        </h3>
+                        <p className="text-xs text-muted-foreground max-w-xs">
+                          {ledgerSearch || ledgerFilter !== 'all'
+                            ? "Try adjusting your search query or type filters."
+                            : "There are no transactions recorded in this period."}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="overflow-x-auto rounded-lg border border-border/40">
+                      <Table>
+                        <TableHeader className="bg-muted/40">
+                          <TableRow>
+                            <TableHead className="w-[120px] text-xs font-semibold py-3">Date</TableHead>
+                            <TableHead className="w-[180px] text-xs font-semibold py-3">Category/Source</TableHead>
+                            <TableHead className="text-xs font-semibold py-3">Description</TableHead>
+                            <TableHead className="w-[130px] text-right text-xs font-semibold py-3">Amount</TableHead>
+                            <TableHead className="w-[60px] text-center text-xs font-semibold py-3">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filtered.map((item) => {
+                            const isProcessing = processingLedgerIds.includes(item.id);
+                            
+                            // Badge color styling based on type
+                            let badgeStyle = "bg-teal-500/10 text-teal-400 border border-teal-500/20";
+                            if (item.type === 'spare') badgeStyle = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+                            else if (item.type === 'consumable') badgeStyle = "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+                            else if (item.type === 'borrowing') badgeStyle = "bg-rose-500/10 text-rose-400 border border-rose-500/20";
+
+                            return (
+                              <TableRow key={item.id} className="hover:bg-muted/20">
+                                <TableCell className="text-xs tabular-nums text-muted-foreground py-3">
+                                  {new Date(item.date).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                  })}
+                                </TableCell>
+                                <TableCell className="py-3">
+                                  <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide", badgeStyle)}>
+                                    {item.typeName}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-xs text-foreground font-medium py-3">
+                                  {item.description}
+                                </TableCell>
+                                <TableCell className="text-right py-3">
+                                  <span className={cn(
+                                    "text-xs font-bold tabular-nums font-display",
+                                    item.amount < 0 ? "text-emerald-500" : "text-rose-500"
+                                  )}>
+                                    {item.amount < 0
+                                      ? `+PHP ${formatPHP(Math.abs(item.amount))}`
+                                      : `-PHP ${formatPHP(item.amount)}`}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center py-3">
+                                  <ConfirmDialog
+                                    trigger={
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        disabled={isProcessing}
+                                        className="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer"
+                                      >
+                                        {isProcessing ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                    }
+                                    title="Delete Transaction"
+                                    description={
+                                      item.originalRecord?.transfer_link_id 
+                                        ? "This transaction is part of a transfer. Deleting it will automatically delete the matching entry on the other side. This action cannot be undone."
+                                        : "Are you sure you want to delete this transaction? This action cannot be undone."
+                                    }
+                                    confirmLabel="Delete"
+                                    onConfirm={() => handleDeleteLedgerItem(item)}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

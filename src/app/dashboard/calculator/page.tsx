@@ -60,6 +60,7 @@ import {
   getConsumableExpensesByUser,
   createConsumableExpense,
   deleteConsumableExpense,
+  recalculateBillPaymentsForMonth,
 } from '@/features/salary/services/salary.service';
 import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, BudgetAllocationWithAmount, SalaryConfig, AllocationType, PayFrequency, ConsumableExpense } from '@/features/salary/types/salary.types';
 import { PayslipScanner, type PayslipData } from '@/components/ui/payslip-scanner';
@@ -856,27 +857,11 @@ export default function CalculatorPage() {
       await createPayPeriod(user.id, saveInput);
       toast.success('Pay period saved successfully.');
 
-      // Sync bill payments: only mark as fully paid when actual >= budgeted
-      const existingBills = await getBillPayments(currentMonth);
-      const billMap = new Map(existingBills.map((b) => [b.allocation_id, b]));
-
-      for (const alloc of (data.allocation_amounts || [])) {
-        if (alloc.actual > 0) {
-          try {
-            const existing = billMap.get(alloc.allocation_id);
-            const previousAmount = existing ? existing.amount : 0;
-            const totalPaid = previousAmount + alloc.actual;
-            const isFullyPaid = totalPaid >= alloc.budgeted;
-
-            await upsertBillPayment(user.id, alloc.allocation_id, currentMonth, {
-              amount: totalPaid,
-              is_paid: isFullyPaid,
-              paid_at: isFullyPaid ? new Date().toISOString() : null,
-            });
-          } catch {
-            // Silently ignore bill sync errors
-          }
-        }
+      // Sync bill payments: recalculate monthly totals based on all pay periods in this month
+      try {
+        await recalculateBillPaymentsForMonth(user.id, currentMonth);
+      } catch {
+        // Silently ignore bill sync errors
       }
 
       // Reset allocation_amounts for the next pay period:
@@ -2115,8 +2100,11 @@ export default function CalculatorPage() {
                               </span>
                             </div>
                             <div className="flex items-center gap-3">
-                              <span className="text-sm font-semibold tabular-nums font-display text-rose-500">
-                                -P {formatPHP(txn.amount)}
+                              <span className={cn(
+                                "text-sm font-semibold tabular-nums font-display",
+                                txn.amount < 0 ? "text-emerald-500" : "text-rose-500"
+                              )}>
+                                {txn.amount < 0 ? `+P ${formatPHP(Math.abs(txn.amount))}` : `-P ${formatPHP(txn.amount)}`}
                               </span>
                               <ConfirmDialog
                                 trigger={
@@ -2130,7 +2118,7 @@ export default function CalculatorPage() {
                                   </Button>
                                 }
                                 title="Delete Transaction"
-                                description={`Are you sure you want to delete "${txn.description}" (P ${formatPHP(txn.amount)})? This action cannot be undone.`}
+                                description={`Are you sure you want to delete "${txn.description}" (P ${formatPHP(Math.abs(txn.amount))})? This action cannot be undone.`}
                                 confirmLabel="Delete"
                                 onConfirm={() => handleDeleteSpare(txn.id)}
                               />

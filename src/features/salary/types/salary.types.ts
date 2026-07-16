@@ -157,6 +157,7 @@ export interface SpareTransaction {
   description: string;
   amount: number;
   transaction_date: string;
+  transfer_link_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -310,6 +311,7 @@ export interface AllocationExpense {
   held_fund_id: string | null;
   is_borrowing_settled?: boolean;
   notes: string | null;
+  transfer_link_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -353,6 +355,7 @@ export interface AllocationExpense {
   borrowing_id: string | null;
   held_fund_id: string | null;
   notes: string | null;
+  transfer_link_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -380,3 +383,10 @@ export interface AllocationFundSummary {
   remaining: number;
   expenses: AllocationExpense[];
 }
+
+export interface AllocationExpenseWithCategory extends AllocationExpense {
+  budget_allocations?: {
+    category: string;
+  } | null;
+}
+
