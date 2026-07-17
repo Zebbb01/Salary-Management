@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { Resolver } from 'react-hook-form';
@@ -66,6 +67,7 @@ import type { PayPeriodInput, PayPeriod, SpareTransaction, AllocationAmount, Bud
 import { PayslipScanner, type PayslipData } from '@/components/ui/payslip-scanner';
 import { MonthYearPicker } from '@/components/ui/month-year-picker';
 
+import { CalculatorCharts } from '@/features/salary/components/calculator/calculator-charts';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -205,6 +207,16 @@ function FormField({
 // Main Calculator Page
 // ---------------------------------------------------------------------------
 export default function CalculatorPage() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingLastPeriod, setIsLoadingLastPeriod] = useState(true);
 
@@ -215,11 +227,11 @@ export default function CalculatorPage() {
   const [periodSearch, setPeriodSearch] = useState('');
   const [spareTransactions, setSpareTransactions] = useState<SpareTransaction[]>([]);
   const [spareTotal, setSpareTotal] = useState(0);
-  const [startingBalance, setStartingBalance] = useState(0);
-  const [monthSpareAdded, setMonthSpareAdded] = useState(0);
+  const [startingBalance, setStartingBalance] = useLocalStorage('calculator_input_startingBalance', 0);
+  const [monthSpareAdded, setMonthSpareAdded] = useLocalStorage('calculator_input_monthSpareAdded', 0);
   const [isLoadingSpare, setIsLoadingSpare] = useState(false);
   const [isAddingSpare, setIsAddingSpare] = useState(false);
-  const [spareRows, setSpareRows] = useState<{ description: string; amount: string; date: string }[]>([
+  const [spareRows, setSpareRows] = useLocalStorage<{ description: string; amount: string; date: string }[]>('calculator_input_spareRows', [
     { description: '', amount: '', date: new Date().toISOString().split('T')[0] },
   ]);
   const [budgetAllocations, setBudgetAllocations] = useState<BudgetAllocationWithAmount[]>([]);
@@ -227,15 +239,15 @@ export default function CalculatorPage() {
   // Track which allocations are truly paid (remaining balance = 0 from bill payments)
   const [paidAllocationIds, setPaidAllocationIds] = useState<Set<string>>(new Set());
   // Additional income rows
-  const [additionalIncomeRows, setAdditionalIncomeRows] = useState<{ label: string; amount: string }[]>([]);
+  const [additionalIncomeRows, setAdditionalIncomeRows] = useLocalStorage<{ label: string; amount: string }[]>('calculator_input_additionalIncomeRows', []);
   const [payFrequency, setPayFrequency] = useState<PayFrequency>('semi-monthly');
 
   // Consumable expenses state
   const [consumableExpenses, setConsumableExpenses] = useState<ConsumableExpense[]>([]);
-  const [consumableAllowance, setConsumableAllowance] = useState(4500);
+  const [consumableAllowance, setConsumableAllowance] = useLocalStorage('calculator_input_consumableAllowance', 4500);
   const [isLoadingConsumable, setIsLoadingConsumable] = useState(false);
   const [isAddingConsumable, setIsAddingConsumable] = useState(false);
-  const [consumableRows, setConsumableRows] = useState<{ description: string; amount: string; date: string }[]>([
+  const [consumableRows, setConsumableRows] = useLocalStorage<{ description: string; amount: string; date: string }[]>('calculator_input_consumableRows', [
     { description: '', amount: '', date: new Date().toISOString().split('T')[0] },
   ]);
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -784,6 +796,17 @@ export default function CalculatorPage() {
     return calculatePayPeriod(calcInput);
   }, [watchedValues, includeFirstWage, includeSecondWage, includePartTime, includeWageTax, includePtTax, additionalIncomeRows]);
 
+  const consumableSummaryObject = useMemo(() => {
+    const totalSpent = consumableExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+    return {
+      allowance: consumableAllowance,
+      totalSpent,
+      remaining: consumableAllowance - totalSpent,
+      isOverBudget: totalSpent > consumableAllowance,
+      expenses: consumableExpenses,
+    };
+  }, [consumableAllowance, consumableExpenses]);
+
   // Derived display values
   const wageTaxRate = Number(watchedValues.wage_tax_rate) || 0;
   const ptTaxRate = Number(watchedValues.pt_tax_rate) || 0;
@@ -986,6 +1009,15 @@ export default function CalculatorPage() {
           <div className="mb-4 sm:hidden flex justify-end gap-2">
              <MonthYearPicker value={pickerValue} onChange={handleMonthChange} />
              <PayslipScanner onDataExtracted={handlePayslipData} />
+          </div>
+
+          {/* Live Charts Overview */}
+          <div className="mb-8">
+            <CalculatorCharts
+              calculationResult={calculation}
+              consumableSummary={consumableSummaryObject}
+              isMobile={isMobile}
+            />
           </div>
 
           {/* ============== CALCULATOR TAB ============== */}

@@ -26,6 +26,43 @@ import { calculatePayPeriod } from '../utils/calculations';
 
 const supabase = createClient();
 
+function formatToISODate(dateStr: string): string {
+  if (!dateStr) return new Date().toISOString().split('T')[0];
+  
+  const trimmed = dateStr.trim();
+  
+  // If it's already YYYY-MM-DD, return it
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  
+  // If it is MM/DD/YYYY
+  const mdPart = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdPart) {
+    const [, m, d, y] = mdPart;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  
+  // If it is DD-MM-YYYY
+  const dmPart = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dmPart) {
+    const [, d, m, y] = dmPart;
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  // Fallback to JS Date parsing
+  try {
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().split('T')[0];
+    }
+  } catch {
+    // Ignore
+  }
+
+  return trimmed;
+}
+
 // ============================================
 // SALARY CONFIG
 // ============================================
@@ -508,7 +545,7 @@ export async function createSpareTransaction(
       pay_period_id: payPeriodId,
       description: transaction.description,
       amount: transaction.amount,
-      transaction_date: transaction.transaction_date ?? new Date().toISOString().split('T')[0],
+      transaction_date: formatToISODate(transaction.transaction_date ?? new Date().toISOString().split('T')[0]),
       transfer_link_id: transaction.transfer_link_id ?? null,
     })
     .select()
@@ -1219,7 +1256,7 @@ export async function createBorrowing(
       amount: borrowing.amount,
       description: borrowing.description ?? null,
       transaction_date:
-        borrowing.transaction_date ?? new Date().toISOString().split('T')[0],
+        formatToISODate(borrowing.transaction_date ?? new Date().toISOString().split('T')[0]),
       pay_period_id: borrowing.pay_period_id ?? null,
     })
     .select()
@@ -1503,7 +1540,7 @@ export async function createBorrowingExpense(
       borrowing_id: input.borrowing_id,
       description: input.description,
       amount: input.amount,
-      expense_date: input.expense_date ?? new Date().toISOString().split('T')[0],
+      expense_date: formatToISODate(input.expense_date ?? new Date().toISOString().split('T')[0]),
     })
     .select()
     .single();
@@ -1848,7 +1885,7 @@ export async function createAllocationExpense(
         type: 'borrowed',
         amount: input.amount,
         description: `Shared expense: ${input.description}`,
-        transaction_date: input.expense_date ?? new Date().toISOString().split('T')[0],
+        transaction_date: formatToISODate(input.expense_date ?? new Date().toISOString().split('T')[0]),
       })
       .select()
       .single();
@@ -1886,7 +1923,7 @@ export async function createAllocationExpense(
       allocation_id: input.allocation_id,
       description: input.description,
       amount: input.amount,
-      expense_date: input.expense_date ?? new Date().toISOString().split('T')[0],
+      expense_date: formatToISODate(input.expense_date ?? new Date().toISOString().split('T')[0]),
       is_shared: input.is_shared ?? false,
       paid_by: input.paid_by ?? null,
       shared_total: input.shared_total ?? null,

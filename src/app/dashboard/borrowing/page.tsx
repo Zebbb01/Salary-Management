@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 import { motion, AnimatePresence } from 'framer-motion';
 import Lottie from 'lottie-react';
 import { successAnimation, warningAnimation } from '@/components/ui/lottie-animations';
@@ -61,7 +62,7 @@ import {
 import type { Borrowing, BorrowingWithExpenses, BorrowingSummary, BorrowingType } from '@/features/salary/types/salary.types';
 import { formatPHP } from '@/features/salary/utils/calculations';
 import { cn } from '@/lib/utils';
-
+import { BorrowingCharts } from '@/features/salary/components/borrowing/borrowing-charts';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -307,6 +308,15 @@ type DateFilterPreset = 'all-time' | 'this-month' | 'last-month' | 'this-year' |
 
 export default function BorrowingPage() {
   const [userId, setUserId] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [summary, setSummary] = useState<BorrowingSummary>({
     totalBorrowed: 0,
@@ -325,18 +335,18 @@ export default function BorrowingPage() {
   const [customMonth, setCustomMonth] = useState<MonthYearSelection | null>(null);
 
   // Form state
-  const [formType, setFormType] = useState<BorrowingType>('borrowed');
-  const [formName, setFormName] = useState('');
-  const [formAmount, setFormAmount] = useState('');
-  const [formDescription, setFormDescription] = useState('');
-  const [formDate, setFormDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [formType, setFormType] = useLocalStorage<BorrowingType>('borrowing_input_formType', 'borrowed');
+  const [formName, setFormName] = useLocalStorage('borrowing_input_formName', '');
+  const [formAmount, setFormAmount] = useLocalStorage('borrowing_input_formAmount', '');
+  const [formDescription, setFormDescription] = useLocalStorage('borrowing_input_formDescription', '');
+  const [formDate, setFormDate] = useLocalStorage('borrowing_input_formDate', new Date().toISOString().split('T')[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Expense tracking state
   const [expandedBorrowingId, setExpandedBorrowingId] = useState<string | null>(null);
-  const [expenseDesc, setExpenseDesc] = useState('');
-  const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [expenseDesc, setExpenseDesc] = useLocalStorage('borrowing_input_expenseDesc', '');
+  const [expenseAmount, setExpenseAmount] = useLocalStorage('borrowing_input_expenseAmount', '');
+  const [expenseDate, setExpenseDate] = useLocalStorage('borrowing_input_expenseDate', new Date().toISOString().split('T')[0]);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
 
   // ----------------------------------------
@@ -780,6 +790,14 @@ export default function BorrowingPage() {
         />
       </motion.div>
 
+      {/* Debt and Borrowing Charts */}
+      <motion.div variants={staggerItem} className="w-full">
+        <BorrowingCharts
+          borrowings={[...activeBorrowings, ...settledBorrowings]}
+          summary={summary}
+          isMobile={isMobile}
+        />
+      </motion.div>
 
       {/* Side-by-side form and active list on desktop */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">

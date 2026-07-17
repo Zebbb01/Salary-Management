@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { LiveAllocationChart } from '@/features/salary/components/settings/live-allocation-chart';
 import type {
   SalaryConfig,
   BudgetAllocation,
@@ -125,6 +126,15 @@ function getRandomIcon(): string {
 export default function SettingsPage() {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   // State
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -948,10 +958,9 @@ export default function SettingsPage() {
 
         {/* ======================== BUDGET TAB ======================== */}
         <TabsContent value="budget" className="space-y-6">
-      {/* ============================================================ */}
-      {/* Budget Allocations (Amount-based)                             */}
-      {/* ============================================================ */}
-      <Card data-onboarding="budget-allocations">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="lg:col-span-8">
+              <Card data-onboarding="budget-allocations">
         <CardHeader>
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
@@ -1342,6 +1351,17 @@ export default function SettingsPage() {
           />
         </CardContent>
       </Card>
+            </div>
+            
+            <div className="lg:col-span-4 lg:sticky lg:top-32">
+              <LiveAllocationChart
+                allocations={allocations}
+                allocationAmounts={allocationAmounts}
+                totalSalary={totalSalary}
+                isMobile={isMobile}
+              />
+            </div>
+          </div>
 
       {/* ============================================================ */}
       {/* Budget Types                                                  */}

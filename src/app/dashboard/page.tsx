@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 import { motion, AnimatePresence } from 'framer-motion';
 import Lottie from 'lottie-react';
 import { successAnimation, warningAnimation } from '@/components/ui/lottie-animations';
@@ -60,19 +61,8 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Legend,
-} from 'recharts';
+import { TrendChart } from '@/features/salary/components/dashboard/trend-chart';
+import { BudgetPieChart } from '@/features/salary/components/dashboard/budget-pie-chart';
 import { toast } from 'sonner';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -527,190 +517,7 @@ interface ChartPayload {
   };
 }
 
-function CustomTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: ChartPayload[];
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || !active) return;
-
-    el.style.transform = '';
-    const rect = el.getBoundingClientRect();
-    const transforms: string[] = [];
-
-    if (rect.right > window.innerWidth - 16) {
-      transforms.push('translateX(calc(-100% - 30px))');
-    } else if (rect.left < 16) {
-      transforms.push('translateX(30px)');
-    }
-
-    if (rect.bottom > window.innerHeight - 16) {
-      transforms.push('translateY(calc(-100% - 20px))');
-    } else if (rect.top < 16) {
-      transforms.push('translateY(20px)');
-    }
-
-    if (transforms.length) {
-      el.style.transform = transforms.join(' ');
-    }
-  });
-
-  if (!active || !payload?.length) return null;
-  const data = payload[0].payload;
-
-  return (
-    <div ref={ref}>
-      <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
-        <CardContent className="px-3 py-2.5">
-          <p className="text-sm font-medium capitalize text-foreground">
-            {data.category}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {formatPercentage(data.percentage)} - PHP {formatPHP(data.amount)}
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ============================================
-// CUSTOM TOOLTIP (Trend Chart)
-// ============================================
-
-interface TrendPayloadItem {
-  name: string;
-  value: number;
-  color: string;
-  dataKey: string;
-  payload?: {
-    label: string;
-    fullLabel?: string;
-    income: number;
-    netPay: number;
-    expenses: number;
-    spare: number;
-    tax: number;
-    savings: number;
-  };
-}
-
-function TrendChartTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: TrendPayloadItem[];
-  label?: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || !active) return;
-
-    // Reset transform to measure natural position
-    el.style.transform = '';
-    const rect = el.getBoundingClientRect();
-    const transforms: string[] = [];
-
-    // Flip horizontally
-    if (rect.right > window.innerWidth - 16) {
-      transforms.push('translateX(calc(-100% - 30px))');
-    } else if (rect.left < 16) {
-      transforms.push('translateX(30px)');
-    }
-
-    // Flip vertically
-    if (rect.bottom > window.innerHeight - 16) {
-      transforms.push('translateY(calc(-100% - 20px))');
-    } else if (rect.top < 16) {
-      transforms.push('translateY(20px)');
-    }
-
-    if (transforms.length) {
-      el.style.transform = transforms.join(' ');
-    }
-  });
-
-  if (!active || !payload?.length) return null;
-
-  const income = payload.find((p) => p.dataKey === 'income')?.value ?? 0;
-  const expenses = payload.find((p) => p.dataKey === 'expenses')?.value ?? 0;
-  const net = income - expenses;
-  const showNet = payload.some(p => p.dataKey === 'income') && payload.some(p => p.dataKey === 'expenses');
-  const fullLabel = payload[0]?.payload?.fullLabel ?? label;
-
-  return (
-    <div ref={ref}>
-      <Card className="shadow-xl border-border/50 bg-card/95 backdrop-blur-sm">
-        <CardContent className="px-3.5 py-3">
-          <p className="text-sm font-semibold text-foreground mb-2">{fullLabel}</p>
-          <div className="space-y-1.5">
-            {payload.map((entry) => (
-              <div key={entry.dataKey} className="flex items-center justify-between gap-6 text-xs">
-                <span className="flex items-center gap-1.5 text-muted-foreground">
-                  <span
-                    className="inline-block h-2 w-2 rounded-full"
-                    style={{ backgroundColor: entry.color }}
-                  />
-                  {entry.name}
-                </span>
-                <span className="font-semibold tabular-nums text-foreground">
-                  PHP {formatPHP(entry.value)}
-                </span>
-              </div>
-            ))}
-          </div>
-          {showNet && (
-            <>
-              <Separator className="my-2" />
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Cashflow Net</span>
-                <span className={cn(
-                  'font-bold tabular-nums',
-                  net >= 0 ? 'text-emerald-500' : 'text-rose-500'
-                )}>
-                  {net >= 0 ? '+' : ''}PHP {formatPHP(net)}
-                </span>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ============================================
-// DONUT CHART CENTER LABEL
-// ============================================
-
-function CenterLabel({ salary }: { salary: number }) {
-  return (
-    <text
-      x="50%"
-      y="50%"
-      textAnchor="middle"
-      dominantBaseline="middle"
-      className="fill-foreground"
-    >
-      <tspan x="50%" dy="-8" className="text-xs fill-muted-foreground">
-        Total
-      </tspan>
-      <tspan x="50%" dy="20" className="text-sm font-semibold fill-foreground">
-        PHP {formatPHP(salary)}
-      </tspan>
-    </text>
-  );
-}
+// Helpers deleted (encapsulated in TrendChart and BudgetPieChart components)
 
 // ============================================
 // EMPTY STATE
@@ -919,31 +726,31 @@ export default function DashboardPage() {
 
   // Form states for Held Funds
   const [showAddHeldFundForm, setShowAddHeldFundForm] = useState(false);
-  const [heldFundName, setHeldFundName] = useState('');
-  const [heldFundAmount, setHeldFundAmount] = useState('');
-  const [heldFundDescription, setHeldFundDescription] = useState('');
+  const [heldFundName, setHeldFundName] = useLocalStorage('dashboard_input_heldFundName', '');
+  const [heldFundAmount, setHeldFundAmount] = useLocalStorage('dashboard_input_heldFundAmount', '');
+  const [heldFundDescription, setHeldFundDescription] = useLocalStorage('dashboard_input_heldFundDescription', '');
 
   // Form states for Allocation Fund Expenses
   const [expandedAllocationId, setExpandedAllocationId] = useState<string | null>(null);
   const [addingExpenseForAllocId, setAddingExpenseForAllocId] = useState<string | null>(null);
-  const [expenseDesc, setExpenseDesc] = useState('');
-  const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
-  const [isShared, setIsShared] = useState(false);
-  const [paidBy, setPaidBy] = useState('');
-  const [sharedTotal, setSharedTotal] = useState('');
-  const [sharedParties, setSharedParties] = useState(2);
+  const [expenseDesc, setExpenseDesc] = useLocalStorage('dashboard_input_expenseDesc', '');
+  const [expenseAmount, setExpenseAmount] = useLocalStorage('dashboard_input_expenseAmount', '');
+  const [expenseDate, setExpenseDate] = useLocalStorage('dashboard_input_expenseDate', new Date().toISOString().split('T')[0]);
+  const [isShared, setIsShared] = useLocalStorage('dashboard_input_isShared', false);
+  const [paidBy, setPaidBy] = useLocalStorage('dashboard_input_paidBy', '');
+  const [sharedTotal, setSharedTotal] = useLocalStorage('dashboard_input_sharedTotal', '');
+  const [sharedParties, setSharedParties] = useLocalStorage('dashboard_input_sharedParties', 2);
 
   // Form states for Transfer Funds
   const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferSource, setTransferSource] = useState('spare');
-  const [transferDest, setTransferDest] = useState('');
-  const [transferAmount, setTransferAmount] = useState('');
-  const [transferDesc, setTransferDesc] = useState('');
-  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+  const [transferSource, setTransferSource] = useLocalStorage('dashboard_input_transferSource', 'spare');
+  const [transferDest, setTransferDest] = useLocalStorage('dashboard_input_transferDest', '');
+  const [transferAmount, setTransferAmount] = useLocalStorage('dashboard_input_transferAmount', '');
+  const [transferDesc, setTransferDesc] = useLocalStorage('dashboard_input_transferDesc', '');
+  const [transferDate, setTransferDate] = useLocalStorage('dashboard_input_transferDate', new Date().toISOString().split('T')[0]);
   const [isSavingTransfer, setIsSavingTransfer] = useState(false);
-  const [deductFromHeldFundId, setDeductFromHeldFundId] = useState('');
-  const [deductAmount, setDeductAmount] = useState('');
+  const [deductFromHeldFundId, setDeductFromHeldFundId] = useLocalStorage('dashboard_input_deductFromHeldFundId', '');
+  const [deductAmount, setDeductAmount] = useLocalStorage('dashboard_input_deductAmount', '');
 
   // Detect mobile/touch devices to disable chart tooltips
   useEffect(() => {
@@ -1204,7 +1011,6 @@ export default function DashboardPage() {
       });
 
       setHeldFunds((prev) => [fund, ...prev]);
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
 
       setHeldFundName('');
@@ -1226,7 +1032,6 @@ export default function DashboardPage() {
       const updated = await returnHeldFund(id);
       setHeldFunds((prev) => prev.map((f) => (f.id === id ? updated : f)));
       toast.success('Fund marked as returned');
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to return held fund';
@@ -1426,7 +1231,6 @@ export default function DashboardPage() {
       setHeldFunds((prev) => prev.map((f) => (f.id === fund.id ? updatedFund : f)));
 
       toast.success(`Converted! Created "${newCategory}" allocation of PHP ${formatPHP(fund.original_amount)}. Remaining PHP ${formatPHP(fund.current_amount)} is online debt.`);
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to convert held fund';
@@ -1442,7 +1246,6 @@ export default function DashboardPage() {
       await deleteHeldFund(id);
       setHeldFunds((prev) => prev.filter((f) => f.id !== id));
       toast.success('Held fund deleted');
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete held fund';
@@ -1493,7 +1296,6 @@ export default function DashboardPage() {
         notes: undefined,
       });
 
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
 
       toast.success('Expense recorded successfully');
@@ -1506,7 +1308,10 @@ export default function DashboardPage() {
       setDeductAmount('');
       setAddingExpenseForAllocId(null);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to record expense';
+      console.error('Error recording expense:', err);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const errorObj = err as any;
+      const msg = errorObj?.message || (err instanceof Error ? err.message : 'Failed to record expense');
       toast.error(msg);
     } finally {
       setIsSavingExpense(false);
@@ -1518,7 +1323,6 @@ export default function DashboardPage() {
     try {
       await deleteAllocationExpense(expenseId);
       toast.success('Expense deleted successfully');
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete expense';
@@ -1617,7 +1421,6 @@ export default function DashboardPage() {
       setTransferAmount('');
       setTransferDesc('');
       setShowTransferModal(false);
-      setIsLoading(true);
       await fetchData(dateFilter, customMonth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to transfer funds';
@@ -3255,211 +3058,12 @@ export default function DashboardPage() {
 
       {/* Income vs Expenses Trend Chart */}
       <motion.div variants={staggerItem}>
-        <Card className="overflow-visible">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                <CardTitle>Financial Trend</CardTitle>
-              </div>
-              <div className="flex items-center gap-1">
-                {[
-                  { label: '3', value: 3 },
-                  { label: '6', value: 6 },
-                  { label: '12', value: 12 },
-                  { label: 'All', value: 100 },
-                ].map((filter) => (
-                  <Button
-                    key={filter.value}
-                    variant={trendLimit === filter.value ? 'secondary' : 'ghost'}
-                    size="sm"
-                    className={cn(
-                      'h-7 px-2.5 text-xs font-medium',
-                      trendLimit === filter.value && 'bg-primary/10 text-primary'
-                    )}
-                    onClick={() => handleTrendFilter(filter.value)}
-                  >
-                    {filter.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <CardDescription>
-              {trendLimit >= 100
-                ? `All ${trendData.length} pay periods`
-                : `Last ${trendData.length} pay period${trendData.length !== 1 ? 's' : ''}`}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {trendData.length > 0 ? (
-              <div className="h-80 min-w-0">
-                <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 320 }}>
-                  <AreaChart data={trendData} margin={{ top: 8, right: 20, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#34d399" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#34d399" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="netPayGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="expensesGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#f472b6" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#f472b6" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="spareGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#a78bfa" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="taxGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#fbbf24" stopOpacity={0.02} />
-                      </linearGradient>
-                      <linearGradient id="savingsGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      vertical={false}
-                      stroke="hsl(220, 13%, 20%)"
-                      strokeOpacity={0.5}
-                    />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: 11, fill: '#94a3b8' }}
-                      tickLine={false}
-                      axisLine={false}
-                      dy={8}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: '#94a3b8' }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`}
-                      width={45}
-                    />
-                    <Tooltip
-                      content={<TrendChartTooltip />}
-                      allowEscapeViewBox={{ x: true, y: true }}
-                      offset={15}
-                      isAnimationActive={false}
-                      cursor={isMobile ? false : { stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
-                      wrapperStyle={{ outline: 'none', zIndex: 50 }}
-                    />
-                    <Legend
-                      iconType="circle"
-                      iconSize={8}
-                      onClick={handleLegendClick}
-                      wrapperStyle={{ fontSize: 12, paddingTop: 16, cursor: 'pointer' }}
-                      formatter={(value: string, entry: any) => {
-                        const dataKey = entry.dataKey;
-                        const isVisible = visibleSeries[dataKey];
-                        return (
-                          <span style={{ 
-                            color: isVisible ? '#94a3b8' : '#475569', 
-                            fontSize: 12, 
-                            textDecoration: isVisible ? 'none' : 'line-through' 
-                          }}>
-                            {value}
-                          </span>
-                        );
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="income"
-                      name="Gross Income"
-                      stroke="#34d399"
-                      strokeWidth={2.5}
-                      fill="url(#incomeGradient)"
-                      hide={!visibleSeries.income}
-                      dot={{ r: 4, fill: '#34d399', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#34d399', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="netPay"
-                      name="Net Pay"
-                      stroke="#38bdf8"
-                      strokeWidth={2.5}
-                      fill="url(#netPayGradient)"
-                      hide={!visibleSeries.netPay}
-                      dot={{ r: 4, fill: '#38bdf8', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#38bdf8', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="expenses"
-                      name="Expenses"
-                      stroke="#f472b6"
-                      strokeWidth={2.5}
-                      fill="url(#expensesGradient)"
-                      hide={!visibleSeries.expenses}
-                      dot={{ r: 4, fill: '#f472b6', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#f472b6', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="spare"
-                      name="Spare"
-                      stroke="#a78bfa"
-                      strokeWidth={2.5}
-                      fill="url(#spareGradient)"
-                      hide={!visibleSeries.spare}
-                      dot={{ r: 4, fill: '#a78bfa', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#a78bfa', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="tax"
-                      name="Tax"
-                      stroke="#fbbf24"
-                      strokeWidth={2.5}
-                      fill="url(#taxGradient)"
-                      hide={!visibleSeries.tax}
-                      dot={{ r: 4, fill: '#fbbf24', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#fbbf24', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="savings"
-                      name="Savings"
-                      stroke="#2dd4bf"
-                      strokeWidth={2.5}
-                      fill="url(#savingsGradient)"
-                      hide={!visibleSeries.savings}
-                      dot={{ r: 4, fill: '#2dd4bf', stroke: '#1e293b', strokeWidth: 2 }}
-                      activeDot={{ r: 6, fill: '#2dd4bf', stroke: '#fff', strokeWidth: 2 }}
-                      animationDuration={800}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-80 items-center justify-center">
-                <div className="flex flex-col items-center gap-3 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted/50">
-                    <BarChart3 className="h-6 w-6 text-muted-foreground/50" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">No trend data yet</p>
-                    <p className="text-xs text-muted-foreground/60">
-                      Save your first pay period to see the trend
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <TrendChart
+          trendData={trendData}
+          trendLimit={trendLimit}
+          onTrendLimitChange={handleTrendFilter}
+          isMobile={isMobile}
+        />
       </motion.div>
 
       {/* Two Column Layout - only show when there's data for the selected period */}
@@ -3467,66 +3071,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Budget Donut Chart */}
         <motion.div variants={staggerItem} data-onboarding="budget-chart">
-          <Card className="h-full overflow-visible">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">Budget Allocation
-              <TooltipProvider>
-                <UITooltip>
-                  <TooltipTrigger className="flex">
-                    <Info className="h-3 w-3 text-muted-foreground/50 cursor-help shrink-0" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    Detailed breakdown of expense allocations
-                  </TooltipContent>
-                </UITooltip>
-              </TooltipProvider>
-            </CardTitle>
-              <CardDescription>
-                Percentage breakdown of your {hasPartTime ? 'combined ' : ''}salary
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent>
-              {chartData.length > 0 ? (
-                <div className="h-96 flex items-center justify-center w-full relative">
-                  <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 100, height: 384 }}>
-                    <PieChart>
-                      <Pie
-                        data={chartData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={110}
-                        outerRadius={160}
-                        paddingAngle={3}
-                        dataKey="value"
-                        strokeWidth={0}
-                        animationBegin={200}
-                        animationDuration={800}
-                      >
-                        {chartData.map((entry, index) => (
-                          <Cell key={index} fill={entry.fill} />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        content={<CustomTooltip />}
-                        allowEscapeViewBox={{ x: true, y: true }}
-                        offset={15}
-                        isAnimationActive={false}
-                        wrapperStyle={{ outline: 'none', zIndex: 50 }}
-                      />
-                      <CenterLabel salary={totalSalary} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <div className="flex h-96 items-center justify-center">
-                  <p className="text-sm text-muted-foreground">
-                    No allocations configured
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <BudgetPieChart
+            chartData={chartData}
+            totalSalary={totalSalary}
+            isMobile={isMobile}
+            hasPartTime={hasPartTime}
+          />
         </motion.div>
 
         {/* Allocation Categories */}
